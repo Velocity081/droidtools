@@ -15,6 +15,7 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
@@ -23,6 +24,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDp
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -170,14 +172,18 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -185,6 +191,7 @@ import com.droidbubble.app.service.IslandAccessibilityService
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -196,6 +203,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -209,6 +217,7 @@ import com.droidbubble.app.model.ScreenRecordingState
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -366,6 +375,89 @@ fun extractMediaAccentColor(bitmap: Bitmap?): Color {
 }
 
 private val LocalIslandHapticsEnabled = androidx.compose.runtime.compositionLocalOf { true }
+
+private class LiquidCardTouchState(
+    val modifier: Modifier,
+    val scale: Float,
+    val glowAlpha: Float,
+    val touchPosition: Offset
+)
+
+@Composable
+private fun rememberLiquidCardTouchState(enabled: Boolean): LiquidCardTouchState {
+    var isPressed by remember { mutableStateOf(false) }
+    var touchPosition by remember { mutableStateOf(Offset.Zero) }
+    LaunchedEffect(enabled) {
+        if (!enabled) isPressed = false
+    }
+    val scale by animateFloatAsState(
+        targetValue = if (enabled && isPressed) 0.968f else 1f,
+        animationSpec = if (isPressed) {
+            spring(dampingRatio = 0.72f, stiffness = 620f)
+        } else {
+            spring(dampingRatio = 0.58f, stiffness = 420f)
+        },
+        label = "liquidCardScale"
+    )
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (enabled && isPressed) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (isPressed) 140 else 320,
+            easing = FastOutSlowInEasing
+        ),
+        label = "liquidCardGlowAlpha"
+    )
+    val pointerMod = if (enabled) {
+        Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                isPressed = true
+                touchPosition = down.position
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val active = event.changes.firstOrNull { it.pressed }
+                    if (active != null) {
+                        touchPosition = active.position
+                    } else {
+                        break
+                    }
+                }
+                isPressed = false
+            }
+        }
+    } else {
+        Modifier
+    }
+    return LiquidCardTouchState(pointerMod, scale, glowAlpha, touchPosition)
+}
+
+@Composable
+private fun LiquidTouchGlowOverlay(
+    touchState: LiquidCardTouchState,
+    modifier: Modifier = Modifier
+) {
+    if (touchState.glowAlpha > 0.01f) {
+        Canvas(modifier = modifier.fillMaxSize()) {
+            val glowRadius = (size.height * 0.88f).coerceAtLeast(64.dp.toPx())
+            val center = touchState.touchPosition
+            val a = touchState.glowAlpha
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colorStops = arrayOf(
+                        0.0f to Color.White.copy(alpha = 0.22f * a),
+                        0.38f to Color.White.copy(alpha = 0.11f * a),
+                        0.72f to Color.White.copy(alpha = 0.03f * a),
+                        1.0f to Color.Transparent
+                    ),
+                    center = center,
+                    radius = glowRadius
+                ),
+                radius = glowRadius,
+                center = center
+            )
+        }
+    }
+}
 
 @Composable
 private fun rememberBounceButtonState(
@@ -1205,7 +1297,7 @@ fun IslandOverlayRoot(
         isExpanded && (primaryPriority == IslandPriority.SCREEN_RECORDING || primaryPriority == IslandPriority.CALL || primaryPriority == IslandPriority.FPS || primaryPriority == IslandPriority.WEATHER || primaryPriority == IslandPriority.NETWORK_SPEED || primaryPriority == IslandPriority.CHARGING || primaryPriority == IslandPriority.ALARM) -> (78.dp * settings.expandedScale).coerceAtLeast(68.dp)
         isExpanded && primaryPriority == IslandPriority.PROGRESS -> (84.dp * settings.expandedScale).coerceAtLeast(74.dp)
         isExpanded && primaryPriority == IslandPriority.POP_NOTIFICATION -> (notifBaseHeight * settings.expandedScale).coerceAtLeast(136.dp)
-        isExpanded && primaryPriority == IslandPriority.FLASHLIGHT -> if (settings.designLanguage == DesignLanguage.MATERIAL3) (74.dp * settings.expandedScale).coerceAtLeast(60.dp) else (205.dp * settings.expandedScale).coerceAtLeast(165.dp)
+        isExpanded && primaryPriority == IslandPriority.FLASHLIGHT -> (98.dp * settings.expandedScale).coerceAtLeast(84.dp)
         isExpanded && primaryPriority == IslandPriority.MEDIA -> ((195.dp * settings.expandedScale) + mediaExtraLyricsHeight).coerceAtLeast(155.dp)
         isExpanded -> (195.dp * settings.expandedScale).coerceAtLeast(155.dp)
         else -> settings.heightDp.dp
@@ -1242,7 +1334,7 @@ fun IslandOverlayRoot(
             IslandPriority.ALARM -> 78.dp
             IslandPriority.PROGRESS -> 84.dp
             IslandPriority.POP_NOTIFICATION -> notifBaseHeight
-            IslandPriority.FLASHLIGHT -> if (settings.designLanguage == DesignLanguage.MATERIAL3) 74.dp else 205.dp
+            IslandPriority.FLASHLIGHT -> 98.dp
             IslandPriority.MEDIA -> if (hasAvailableLyrics) 202.dp else 180.dp
             else -> 180.dp
         }
@@ -1256,7 +1348,7 @@ fun IslandOverlayRoot(
             IslandPriority.ALARM -> 68.dp
             IslandPriority.PROGRESS -> 74.dp
             IslandPriority.POP_NOTIFICATION -> 136.dp
-            IslandPriority.FLASHLIGHT -> if (settings.designLanguage == DesignLanguage.MATERIAL3) 74.dp else 165.dp
+            IslandPriority.FLASHLIGHT -> 84.dp
             else -> 150.dp
         }
         return (baseH * settings.expandedScale).coerceAtLeast(minH)
@@ -1519,7 +1611,7 @@ fun IslandOverlayRoot(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(animatedCardSpacing),
-                    modifier = if (isExpanded && primaryPriority != IslandPriority.FLASHLIGHT) {
+                    modifier = if (isExpanded) {
                         Modifier.pointerInput(Unit) {
                             detectVerticalDragGestures { _, dragAmount ->
                                 if (dragAmount < -15f) {
@@ -1530,6 +1622,40 @@ fun IslandOverlayRoot(
                         }
                     } else Modifier
                 ) {
+                    val card1BlurTarget = if (isExpanded && expandProgress > 0.72f) 0f else 1f
+                    val card1BlurFraction by animateFloatAsState(
+                        targetValue = card1BlurTarget,
+                        animationSpec = if (card1BlurTarget == 0f) {
+                            tween(durationMillis = (260 / speed).roundToInt(), easing = FastOutSlowInEasing)
+                        } else {
+                            tween(durationMillis = (140 / speed).roundToInt(), easing = FastOutSlowInEasing)
+                        },
+                        label = "card1BlurFraction"
+                    )
+                    val card2BlurTarget = if (card2Expanded && animatedCard2Alpha > 0.65f) 0f else 1f
+                    val card2BlurFraction by animateFloatAsState(
+                        targetValue = card2BlurTarget,
+                        animationSpec = if (card2BlurTarget == 0f) {
+                            tween(durationMillis = (260 / speed).roundToInt(), easing = FastOutSlowInEasing)
+                        } else {
+                            tween(durationMillis = (140 / speed).roundToInt(), easing = FastOutSlowInEasing)
+                        },
+                        label = "card2BlurFraction"
+                    )
+                    val card3BlurTarget = if (card3Expanded && animatedCard3Alpha > 0.65f) 0f else 1f
+                    val card3BlurFraction by animateFloatAsState(
+                        targetValue = card3BlurTarget,
+                        animationSpec = if (card3BlurTarget == 0f) {
+                            tween(durationMillis = (260 / speed).roundToInt(), easing = FastOutSlowInEasing)
+                        } else {
+                            tween(durationMillis = (140 / speed).roundToInt(), easing = FastOutSlowInEasing)
+                        },
+                        label = "card3BlurFraction"
+                    )
+                    val card1Liquid = rememberLiquidCardTouchState(settings.liquidTouchEffect && isExpanded)
+                    val card2Liquid = rememberLiquidCardTouchState(settings.liquidTouchEffect && isExpanded)
+                    val card3Liquid = rememberLiquidCardTouchState(settings.liquidTouchEffect && isExpanded)
+
                     // Card 1: Primary Expanded Card
                     if (animatedCard1Width > 1.dp && (expandProgress > 0.001f || isExpanded)) {
                         Box(
@@ -1539,12 +1665,16 @@ fun IslandOverlayRoot(
                                 .height(animatedCard1Height)
                                 .graphicsLayer {
                                     alpha = cardContainerAlpha
-                                    if (settings.isTeardropCutout) {
+                                    scaleX = card1Liquid.scale
+                                    val baseScaleY = if (settings.isTeardropCutout) {
                                         transformOrigin = TransformOrigin(0.5f, 0f)
-                                        val morphScaleY = 0.88f + 0.12f * expandProgress.coerceIn(0f, 1f)
-                                        scaleY = morphScaleY
+                                        0.88f + 0.12f * expandProgress.coerceIn(0f, 1f)
+                                    } else {
+                                        1f
                                     }
+                                    scaleY = baseScaleY * card1Liquid.scale
                                 }
+                                .then(card1Liquid.modifier)
                                 .clip(RoundedCornerShape(animatedCornerRadius))
                                 .then(
                                     if (animatedCard1Width > 2.dp) {
@@ -1622,6 +1752,7 @@ fun IslandOverlayRoot(
                                                 },
                                                 onHorizontalDrag = { _, dragAmount ->
                                                     when (primaryPriority) {
+                                                        IslandPriority.FLASHLIGHT -> Unit
                                                         IslandPriority.CALL,
                                                         IslandPriority.SCREEN_RECORDING,
                                                         IslandPriority.FPS,
@@ -1666,18 +1797,18 @@ fun IslandOverlayRoot(
                                                 .fillMaxSize()
                                                 .background(Color.Black.copy(alpha = 0.38f))
                                         )
-                                        // Black gradient coming from the bottom
+                                        // Black gradient coming from the top so blurred album art shines through the bottom half
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
                                                 .background(
                                                     Brush.verticalGradient(
                                                         colors = listOf(
+                                                            Color.Black,
+                                                            Color.Black.copy(alpha = 0.85f),
+                                                            Color.Black.copy(alpha = 0.42f),
                                                             Color.Transparent,
-                                                            Color.Transparent,
-                                                            Color.Black.copy(alpha = 0.40f),
-                                                            Color.Black.copy(alpha = 0.82f),
-                                                            Color.Black
+                                                            Color.Transparent
                                                         )
                                                     )
                                                 )
@@ -1696,16 +1827,7 @@ fun IslandOverlayRoot(
                                                 )
                                             )
                                         }
-                                        primaryPriority == IslandPriority.FLASHLIGHT -> {
-                                            val blurpleTint = Color(0xFFD2D6FF)
-                                            Brush.verticalGradient(
-                                                colors = listOf(
-                                                    Color.Transparent,
-                                                    blurpleTint.copy(alpha = 0.06f * expandProgress),
-                                                    blurpleTint.copy(alpha = 0.20f * expandProgress)
-                                                )
-                                            )
-                                        }
+                                        primaryPriority == IslandPriority.FLASHLIGHT -> null
                                         primaryPriority == IslandPriority.SCREEN_RECORDING -> {
                                             val redTint = Color(0xFFFF453A)
                                             Brush.verticalGradient(
@@ -1785,12 +1907,20 @@ fun IslandOverlayRoot(
                                         primaryPriority == IslandPriority.WEATHER ||
                                         primaryPriority == IslandPriority.NETWORK_SPEED ||
                                         primaryPriority == IslandPriority.CHARGING
+                                val card1BlurDp = (card1BlurFraction * 15f).dp
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .padding(
                                             horizontal = ((if (primaryPriority == IslandPriority.FLASHLIGHT) 16.dp else 20.dp) * settings.expandedScale).coerceIn(14.dp, 24.dp),
                                             vertical = ((if (isCompactRowCard1) 12.dp else if (primaryPriority == IslandPriority.POP_NOTIFICATION) 16.dp else 20.dp) * settings.expandedScale).coerceIn(10.dp, 22.dp)
+                                        )
+                                        .then(
+                                            if (card1BlurDp > 0.2.dp) {
+                                                Modifier.blur(radius = card1BlurDp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                                            } else {
+                                                Modifier
+                                            }
                                         )
                                         .graphicsLayer {
                                             alpha = expandedAlpha
@@ -1826,7 +1956,14 @@ fun IslandOverlayRoot(
                                     )
                                 }
                             }
-                            GlassBottomHighlight(
+                            LiquidTouchGlowOverlay(touchState = card1Liquid)
+                            GlassEdgeHighlight(
+                                glassEnabled = settings.isGlass,
+                                glassOpacity = settings.glassOpacity,
+                                cornerRadius = animatedCornerRadius,
+                                modifier = Modifier.align(Alignment.TopCenter)
+                            )
+                            GlassEdgeHighlight(
                                 glassEnabled = settings.isGlass,
                                 glassOpacity = settings.glassOpacity,
                                 cornerRadius = animatedCornerRadius,
@@ -1844,9 +1981,11 @@ fun IslandOverlayRoot(
                                 .height(animatedCard2Height)
                                 .graphicsLayer {
                                     alpha = animatedCard2Alpha
-                                    scaleX = 0.92f + (0.08f * animatedCard2Alpha.coerceIn(0f, 1f))
-                                    scaleY = 0.92f + (0.08f * animatedCard2Alpha.coerceIn(0f, 1f))
+                                    val baseScale = 0.92f + (0.08f * animatedCard2Alpha.coerceIn(0f, 1f))
+                                    scaleX = baseScale * card2Liquid.scale
+                                    scaleY = baseScale * card2Liquid.scale
                                 }
+                                .then(card2Liquid.modifier)
                                 .clip(RoundedCornerShape(animatedCornerRadius))
                                 .then(
                                     if (settings.glassEnabled) {
@@ -1913,6 +2052,7 @@ fun IslandOverlayRoot(
                                                 },
                                                 onHorizontalDrag = { _, dragAmount ->
                                                     when (secondaryPriority) {
+                                                        IslandPriority.FLASHLIGHT -> Unit
                                                         IslandPriority.CALL,
                                                         IslandPriority.SCREEN_RECORDING,
                                                         IslandPriority.FPS,
@@ -1956,18 +2096,18 @@ fun IslandOverlayRoot(
                                                 .fillMaxSize()
                                                 .background(Color.Black.copy(alpha = 0.38f))
                                         )
-                                        // Black gradient coming from the bottom
+                                        // Black gradient coming from the top so blurred album art shines through the bottom half
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
                                                 .background(
                                                     Brush.verticalGradient(
                                                         colors = listOf(
+                                                            Color.Black,
+                                                            Color.Black.copy(alpha = 0.85f),
+                                                            Color.Black.copy(alpha = 0.42f),
                                                             Color.Transparent,
-                                                            Color.Transparent,
-                                                            Color.Black.copy(alpha = 0.40f),
-                                                            Color.Black.copy(alpha = 0.82f),
-                                                            Color.Black
+                                                            Color.Transparent
                                                         )
                                                     )
                                                 )
@@ -1986,16 +2126,7 @@ fun IslandOverlayRoot(
                                                 )
                                             )
                                         }
-                                        secondaryPriority == IslandPriority.FLASHLIGHT -> {
-                                            val blurpleTint = Color(0xFFD2D6FF)
-                                            Brush.verticalGradient(
-                                                colors = listOf(
-                                                    Color.Transparent,
-                                                    blurpleTint.copy(alpha = 0.06f * animatedCard2Alpha),
-                                                    blurpleTint.copy(alpha = 0.20f * animatedCard2Alpha)
-                                                )
-                                            )
-                                        }
+                                        secondaryPriority == IslandPriority.FLASHLIGHT -> null
                                         secondaryPriority == IslandPriority.SCREEN_RECORDING -> {
                                             val redTint = Color(0xFFFF453A)
                                             Brush.verticalGradient(
@@ -2068,12 +2199,20 @@ fun IslandOverlayRoot(
                                         secondaryPriority == IslandPriority.WEATHER ||
                                         secondaryPriority == IslandPriority.NETWORK_SPEED ||
                                         secondaryPriority == IslandPriority.CHARGING
+                                val card2BlurDp = (card2BlurFraction * 15f).dp
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .padding(
                                             horizontal = ((if (secondaryPriority == IslandPriority.FLASHLIGHT) 16.dp else 20.dp) * settings.expandedScale).coerceIn(14.dp, 24.dp),
                                             vertical = ((if (isCompactRowCard2) 12.dp else if (secondaryPriority == IslandPriority.POP_NOTIFICATION) 16.dp else 20.dp) * settings.expandedScale).coerceIn(10.dp, 22.dp)
+                                        )
+                                        .then(
+                                            if (card2BlurDp > 0.2.dp) {
+                                                Modifier.blur(radius = card2BlurDp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                                            } else {
+                                                Modifier
+                                            }
                                         )
                                 ) {
                                     ExpandedCardContent(
@@ -2104,7 +2243,14 @@ fun IslandOverlayRoot(
                                     )
                                 }
                             }
-                            GlassBottomHighlight(
+                            LiquidTouchGlowOverlay(touchState = card2Liquid)
+                            GlassEdgeHighlight(
+                                glassEnabled = settings.isGlass,
+                                glassOpacity = settings.glassOpacity,
+                                cornerRadius = animatedCornerRadius,
+                                modifier = Modifier.align(Alignment.TopCenter)
+                            )
+                            GlassEdgeHighlight(
                                 glassEnabled = settings.isGlass,
                                 glassOpacity = settings.glassOpacity,
                                 cornerRadius = animatedCornerRadius,
@@ -2122,9 +2268,11 @@ fun IslandOverlayRoot(
                                 .height(animatedCard3Height)
                                 .graphicsLayer {
                                     alpha = animatedCard3Alpha
-                                    scaleX = 0.92f + (0.08f * animatedCard3Alpha.coerceIn(0f, 1f))
-                                    scaleY = 0.92f + (0.08f * animatedCard3Alpha.coerceIn(0f, 1f))
+                                    val baseScale = 0.92f + (0.08f * animatedCard3Alpha.coerceIn(0f, 1f))
+                                    scaleX = baseScale * card3Liquid.scale
+                                    scaleY = baseScale * card3Liquid.scale
                                 }
+                                .then(card3Liquid.modifier)
                                 .clip(RoundedCornerShape(animatedCornerRadius))
                                 .then(
                                     if (settings.glassEnabled) {
@@ -2191,6 +2339,7 @@ fun IslandOverlayRoot(
                                                 },
                                                 onHorizontalDrag = { _, dragAmount ->
                                                     when (tertiaryPriority) {
+                                                        IslandPriority.FLASHLIGHT -> Unit
                                                         IslandPriority.CALL,
                                                         IslandPriority.SCREEN_RECORDING,
                                                         IslandPriority.FPS,
@@ -2239,11 +2388,11 @@ fun IslandOverlayRoot(
                                                 .background(
                                                     Brush.verticalGradient(
                                                         colors = listOf(
+                                                            Color.Black,
+                                                            Color.Black.copy(alpha = 0.85f),
+                                                            Color.Black.copy(alpha = 0.42f),
                                                             Color.Transparent,
-                                                            Color.Transparent,
-                                                            Color.Black.copy(alpha = 0.40f),
-                                                            Color.Black.copy(alpha = 0.82f),
-                                                            Color.Black
+                                                            Color.Transparent
                                                         )
                                                     )
                                                 )
@@ -2262,16 +2411,7 @@ fun IslandOverlayRoot(
                                                 )
                                             )
                                         }
-                                        tertiaryPriority == IslandPriority.FLASHLIGHT -> {
-                                            val blurpleTint = Color(0xFFD2D6FF)
-                                            Brush.verticalGradient(
-                                                colors = listOf(
-                                                    Color.Transparent,
-                                                    blurpleTint.copy(alpha = 0.06f * animatedCard3Alpha),
-                                                    blurpleTint.copy(alpha = 0.20f * animatedCard3Alpha)
-                                                )
-                                            )
-                                        }
+                                        tertiaryPriority == IslandPriority.FLASHLIGHT -> null
                                         tertiaryPriority == IslandPriority.SCREEN_RECORDING -> {
                                             val redTint = Color(0xFFFF453A)
                                             Brush.verticalGradient(
@@ -2344,12 +2484,20 @@ fun IslandOverlayRoot(
                                         tertiaryPriority == IslandPriority.WEATHER ||
                                         tertiaryPriority == IslandPriority.NETWORK_SPEED ||
                                         tertiaryPriority == IslandPriority.CHARGING
+                                val card3BlurDp = (card3BlurFraction * 15f).dp
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .padding(
                                             horizontal = ((if (tertiaryPriority == IslandPriority.FLASHLIGHT) 16.dp else 20.dp) * settings.expandedScale).coerceIn(14.dp, 24.dp),
                                             vertical = ((if (isCompactRowCard3) 12.dp else if (tertiaryPriority == IslandPriority.POP_NOTIFICATION) 16.dp else 20.dp) * settings.expandedScale).coerceIn(10.dp, 22.dp)
+                                        )
+                                        .then(
+                                            if (card3BlurDp > 0.2.dp) {
+                                                Modifier.blur(radius = card3BlurDp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                                            } else {
+                                                Modifier
+                                            }
                                         )
                                 ) {
                                     ExpandedCardContent(
@@ -2380,7 +2528,14 @@ fun IslandOverlayRoot(
                                     )
                                 }
                             }
-                            GlassBottomHighlight(
+                            LiquidTouchGlowOverlay(touchState = card3Liquid)
+                            GlassEdgeHighlight(
+                                glassEnabled = settings.isGlass,
+                                glassOpacity = settings.glassOpacity,
+                                cornerRadius = animatedCornerRadius,
+                                modifier = Modifier.align(Alignment.TopCenter)
+                            )
+                            GlassEdgeHighlight(
                                 glassEnabled = settings.isGlass,
                                 glassOpacity = settings.glassOpacity,
                                 cornerRadius = animatedCornerRadius,
@@ -2470,6 +2625,16 @@ fun IslandOverlayRoot(
             val emergenceProgress = (animatedCompactWidth / circleThreshold).coerceIn(0f, 1f)
             val compactPillAlpha = emergenceProgress * emergenceProgress * (3f - 2f * emergenceProgress)
 
+            val mainPillOffsetXPx = with(LocalDensity.current) {
+                when {
+                    settings.isLeftCutout -> ((animatedCompactWidth - settings.heightDp.dp) / 2f).roundToPx()
+                    settings.isRightCutout -> -((animatedCompactWidth - settings.heightDp.dp) / 2f).roundToPx()
+                    else -> animatedDualMainShiftX.roundToPx()
+                }
+            }
+
+            var metaballDetached by remember { mutableStateOf(false) }
+
             // 1. Auxiliary Circular Island Bubble: Placed on the LAYER BELOW (rendered first so main pill covers it!)
             // Fixed circular shape & size; emerges and retracts purely along the X axis from the punch hole
             if (isCompactDual || animatedBubbleOffsetX > 1.dp) {
@@ -2498,6 +2663,58 @@ fun IslandOverlayRoot(
                 val bubbleAlpha = baseBubbleAlpha * compactPillAlpha
 
                 if (bubbleAlpha > 0.01f) {
+                    val densityLocal = LocalDensity.current
+                    val dir = if (settings.isRightCutout) -1f else 1f
+                    val rPx = with(densityLocal) { (bubbleSize / 2f).toPx() }
+                    val halfPillWPx = with(densityLocal) { (animatedCompactWidth / 2f).toPx() }
+                    val pillEdgeXPx = mainPillOffsetXPx + dir * halfPillWPx
+                    val bubbleNearEdgeXPx = bubbleOffsetXPx - dir * rPx
+                    val gapPx = (bubbleNearEdgeXPx - pillEdgeXPx) * dir
+                    val maxGapPx = with(densityLocal) { 4.0.dp.toPx() }
+                    val reattachGapPx = with(densityLocal) { 0.5.dp.toPx() }
+
+                    if (!shouldEmergeSecondary || isSwapMerging || gapPx <= reattachGapPx) {
+                        metaballDetached = false
+                    } else if (gapPx >= maxGapPx) {
+                        metaballDetached = true
+                    }
+
+                    if (!metaballDetached && !isExpanded && compactPillAlpha > 0.15f && bubbleAlpha > 0.05f && gapPx > -rPx * 1.4f && gapPx < maxGapPx) {
+                        val t = (gapPx / maxGapPx).coerceIn(0f, 1f)
+                        val bridgeCenterXPx = ((pillEdgeXPx + bubbleNearEdgeXPx) / 2f).roundToInt()
+                        val bridgeCanvasWDp = with(densityLocal) { (rPx * 1.4f + gapPx.coerceAtLeast(0f)).toDp() }
+                        Canvas(
+                            modifier = Modifier
+                                .offset { IntOffset(x = bridgeCenterXPx, y = bubbleOffsetYPx) }
+                                .width(bridgeCanvasWDp)
+                                .height(bubbleSize)
+                        ) {
+                            val w = size.width
+                            val h = size.height
+                            val cy = h / 2f
+                            val midX = w / 2f
+                            val leftX = 0f
+                            val rightX = w
+                            val attachHalfH = rPx * (0.94f - 0.34f * t)
+                            val waistHalfH = rPx * (0.82f * (1f - t) * (1f - t))
+                            val c1X = (leftX + midX) / 2f
+                            val c2X = (midX + rightX) / 2f
+                            val bridgePath = Path().apply {
+                                moveTo(leftX, cy - attachHalfH)
+                                cubicTo(c1X, cy - attachHalfH, c1X, cy - waistHalfH, midX, cy - waistHalfH)
+                                cubicTo(c2X, cy - waistHalfH, c2X, cy - attachHalfH, rightX, cy - attachHalfH)
+                                lineTo(rightX, cy + attachHalfH)
+                                cubicTo(c2X, cy + attachHalfH, c2X, cy + waistHalfH, midX, cy + waistHalfH)
+                                cubicTo(c1X, cy + waistHalfH, c1X, cy + attachHalfH, leftX, cy + attachHalfH)
+                                close()
+                            }
+                            drawPath(
+                                path = bridgePath,
+                                color = Color.Black.copy(alpha = (bubbleAlpha * (1f - t * t * 0.7f)).coerceIn(0f, 1f))
+                            )
+                        }
+                    }
+
                     val mainRightEdgeFromOrigin = if (isSideCutout) compactMainFull else (compactMainHalf + animatedDualMainShiftX)
                     val emergedDistance = animatedBubbleOffsetX - (mainRightEdgeFromOrigin - bubbleSize / 2f)
                     val contentAlpha = ((emergedDistance - bubbleSize * 0.35f) / (bubbleSize * 0.55f)).coerceIn(0f, 1f) * bubbleAlpha
@@ -2590,13 +2807,6 @@ fun IslandOverlayRoot(
 
             // 2. Main Compact Pill: Rendered on top of the bubble (covers it when sliding near x = 0)
             if (animatedCompactWidth > 0.5.dp) {
-                val mainPillOffsetXPx = with(LocalDensity.current) {
-                    when {
-                        settings.isLeftCutout -> ((animatedCompactWidth - settings.heightDp.dp) / 2f).roundToPx()
-                        settings.isRightCutout -> -((animatedCompactWidth - settings.heightDp.dp) / 2f).roundToPx()
-                        else -> animatedDualMainShiftX.roundToPx()
-                    }
-                }
                 val compactPillShape: Shape = if (settings.isTeardropCutout) {
                     TeardropIslandShape(
                         topEarRadius = teardropEarRadius,
@@ -3496,11 +3706,35 @@ fun AuxiliaryBubbleContent(
         IslandPriority.PROGRESS -> {
             val pct = notification?.progressFraction ?: 0f
             val isIndet = notification?.isIndeterminate == true
+            val iconBmp = notification?.iconBitmap
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                if (isIndet) {
+                if (iconBmp != null) {
+                    if (isIndet) {
+                        Image(
+                            bitmap = iconBmp.asImageBitmap(),
+                            contentDescription = "Live Activity",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            progress = { pct },
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 1.8.dp,
+                            color = if (isM3) m3Primary else Color(0xFFE5E5EA),
+                            trackColor = if (isM3) m3SurfVariant else Color(0xFF2C2C2E)
+                        )
+                        Image(
+                            bitmap = iconBmp.asImageBitmap(),
+                            contentDescription = "Live Activity",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                } else if (isIndet) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp,
@@ -3690,7 +3924,14 @@ fun CompactContent(
             }
 
             IslandPriority.SCREEN_RECORDING -> {
-                PulsingRecordingDot(dotColor = if (isM3) MaterialTheme.colorScheme.error else Color(0xFFFF3B30))
+                Box(
+                    modifier = Modifier
+                        .padding(start = if (isLeftCutout || isRightCutout) 0.dp else 4.dp)
+                        .size(18.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    PulsingRecordingDot(dotColor = if (isM3) MaterialTheme.colorScheme.error else Color(0xFFFF3B30))
+                }
             }
 
             IslandPriority.FLASHLIGHT -> {
@@ -3907,7 +4148,11 @@ fun CompactContent(
                 } else {
                     defaultEqTint
                 }
-                EqualizerVisualizer(isPlaying = media?.isPlaying == true, barColor = compactEqTint)
+                EqualizerVisualizer(
+                    isPlaying = media?.isPlaying == true,
+                    barColor = compactEqTint,
+                    albumArt = displayArt
+                )
             }
 
             IslandPriority.FPS -> {
@@ -4145,6 +4390,7 @@ fun ExpandedCardContent(
                     IslandStateManager.turnOffFlashlight()
                 },
                 onCollapse = onCollapse,
+                scale = scale,
                 designLanguage = designLanguage
             )
         }
@@ -4175,6 +4421,7 @@ fun ExpandedFlashlightView(
     onSetLevel: (Int) -> Unit,
     onTurnOff: () -> Unit,
     onCollapse: () -> Unit,
+    scale: Float = 1.0f,
     designLanguage: DesignLanguage = DesignLanguage.DROIDBUBBLE
 ) {
     val view = LocalView.current
@@ -4188,21 +4435,93 @@ fun ExpandedFlashlightView(
     val currentLevelState = rememberUpdatedState(currentLevel)
     val onSetLevelState = rememberUpdatedState(onSetLevel)
 
-    if (designLanguage == DesignLanguage.MATERIAL3) {
+    val labelColor = when (designLanguage) {
+        DesignLanguage.DROIDBUBBLE -> Color(0xFFB8B8C0)
+        DesignLanguage.GLASS -> Color.White.copy(alpha = 0.85f)
+        DesignLanguage.MATERIAL3 -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val percentColor = when (designLanguage) {
+        DesignLanguage.DROIDBUBBLE -> Color(0xFFB8B8C0)
+        DesignLanguage.GLASS -> Color.White.copy(alpha = 0.85f)
+        DesignLanguage.MATERIAL3 -> MaterialTheme.colorScheme.primary
+    }
+    val iconColor = when (designLanguage) {
+        DesignLanguage.DROIDBUBBLE, DesignLanguage.GLASS -> Color.White
+        DesignLanguage.MATERIAL3 -> lerp(Color.White, MaterialTheme.colorScheme.primary, 0.22f)
+    }
+    val switchCutoutColor = when (designLanguage) {
+        DesignLanguage.DROIDBUBBLE, DesignLanguage.GLASS -> Color(0xFF7A7A82)
+        DesignLanguage.MATERIAL3 -> MaterialTheme.colorScheme.surfaceContainerLowest
+    }
+    val beamColor = when (designLanguage) {
+        DesignLanguage.DROIDBUBBLE -> Color(0xFFEAF0FA)
+        DesignLanguage.GLASS -> Color(0xFFF2F6FF)
+        DesignLanguage.MATERIAL3 -> lerp(Color.White, MaterialTheme.colorScheme.primary, 0.30f)
+    }
+    val arcColor = when (designLanguage) {
+        DesignLanguage.DROIDBUBBLE, DesignLanguage.GLASS -> Color.White
+        DesignLanguage.MATERIAL3 -> lerp(Color.White, MaterialTheme.colorScheme.primary, 0.16f)
+    }
+
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf((currentLevel / 4f).coerceIn(0.20f, 1f)) }
+
+    val targetFraction = if (isDragging) dragFraction else (currentLevel / 4f).coerceIn(0.20f, 1f)
+    val animatedFraction by animateFloatAsState(
+        targetValue = targetFraction,
+        animationSpec = if (isDragging) {
+            spring(dampingRatio = 1f, stiffness = 1200f)
+        } else {
+            spring(dampingRatio = 0.82f, stiffness = 420f)
+        },
+        label = "flashlightBeamFraction"
+    )
+
+    val displayPercent = if (isDragging) {
+        (dragFraction * 100f).roundToInt().coerceIn(5, 100)
+    } else {
+        (currentLevel * 25)
+    }
+    val headerFontSize = (11.5f * scale).coerceIn(10.5f, 13f).sp
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Top header: "Flashlight" on left, percentage on right
         Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Flashlight",
+                color = labelColor,
+                fontSize = headerFontSize,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
+            Text(
+                text = "$displayPercent%",
+                color = percentColor,
+                fontSize = headerFontSize,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
+        }
+
+        // Lower interactive area: Horizontal flashlight icon + volumetric light cone + curved arc handle
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             val (flashBtnInteraction, flashBtnBounce) = rememberBounceButtonState()
             Box(
                 modifier = Modifier
-                    .size(46.dp)
+                    .width((44.dp * scale).coerceIn(36.dp, 52.dp))
+                    .height((31.dp * scale).coerceIn(26.dp, 36.dp))
                     .then(flashBtnBounce)
-                    .clip(M3CloverShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer)
                     .clickable(
                         interactionSource = flashBtnInteraction,
                         indication = null
@@ -4212,272 +4531,241 @@ fun ExpandedFlashlightView(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.FlashlightOn,
-                    contentDescription = "Flashlight",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(24.dp)
-                )
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    val cy = h / 2f
+
+                    // 1. Handle body
+                    val handleRight = w * 0.52f
+                    val handleHalfH = h * 0.18f
+                    val handleRadius = 4.dp.toPx().coerceAtMost(handleHalfH)
+                    val handlePath = Path().apply {
+                        addRoundRect(
+                            RoundRect(
+                                left = 0f,
+                                top = cy - handleHalfH,
+                                right = handleRight,
+                                bottom = cy + handleHalfH,
+                                topLeftCornerRadius = CornerRadius(handleRadius, handleRadius),
+                                bottomLeftCornerRadius = CornerRadius(handleRadius, handleRadius),
+                                topRightCornerRadius = CornerRadius.Zero,
+                                bottomRightCornerRadius = CornerRadius.Zero
+                            )
+                        )
+                    }
+                    drawPath(path = handlePath, color = iconColor)
+
+                    // 2. Flared bezel trapezoid
+                    val bezelLeft = w * 0.50f
+                    val bezelRight = w * 0.80f
+                    val bezelFarHalfH = h * 0.38f
+                    val bezelPath = Path().apply {
+                        moveTo(bezelLeft, cy - handleHalfH)
+                        lineTo(bezelRight, cy - bezelFarHalfH)
+                        lineTo(bezelRight, cy + bezelFarHalfH)
+                        lineTo(bezelLeft, cy + handleHalfH)
+                        close()
+                    }
+                    drawPath(path = bezelPath, color = iconColor)
+
+                    // 3. Tall rounded vertical lens cap capsule
+                    val capLeft = w * 0.86f
+                    val capRight = w * 0.98f
+                    val capW = (capRight - capLeft).coerceAtLeast(2.dp.toPx())
+                    val capHalfH = h * 0.40f
+                    drawRoundRect(
+                        color = iconColor,
+                        topLeft = Offset(capLeft, cy - capHalfH),
+                        size = Size(capW, capHalfH * 2f),
+                        cornerRadius = CornerRadius(capW / 2f, capW / 2f)
+                    )
+
+                    // 4. Horizontal pill-shaped power switch cutout centered on the handle
+                    val switchW = w * 0.18f
+                    val switchH = h * 0.10f
+                    val switchLeft = (handleRight - switchW) * 0.48f
+                    drawRoundRect(
+                        color = switchCutoutColor,
+                        topLeft = Offset(switchLeft, cy - switchH / 2f),
+                        size = Size(switchW, switchH),
+                        cornerRadius = CornerRadius(switchH / 2f, switchH / 2f)
+                    )
+                }
             }
 
-            Slider(
-                value = currentLevel.toFloat(),
-                onValueChange = { newVal ->
-                    val newL = newVal.roundToInt().coerceIn(1, 4)
-                    if (newL != currentLevel) {
-                        currentLevel = newL
-                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                        onSetLevelState.value(newL)
-                    }
-                },
-                valueRange = 1f..4f,
-                steps = 2,
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
-                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            )
-        }
-        return
-    }
+            Spacer(modifier = Modifier.width(5.dp))
 
-    // Animated fraction for the light beam height (1 -> 0.25f, 4 -> 1.0f)
-    val targetFraction = (currentLevel / 4f)
-    val animatedFraction by animateFloatAsState(
-        targetValue = targetFraction,
-        animationSpec = spring(
-            dampingRatio = 0.8f,
-            stiffness = 450f
-        ),
-        label = "flashlightBeamFraction"
-    )
-
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        // Upper section: The light-beam triangular blur vertical slider
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        val h = size.height.toFloat()
-                        if (h > 0) {
-                            val relY = (down.position.y / h).coerceIn(0f, 1f)
-                            val newLevel = (((1f - relY) * 3.999f).toInt() + 1).coerceIn(1, 4)
-                            if (newLevel != currentLevelState.value) {
-                                currentLevel = newLevel
-                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                onSetLevelState.value(newLevel)
-                            }
-                        }
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull() ?: break
-                            if (!change.pressed) break
-                            change.consume()
-                            val currentH = size.height.toFloat()
-                            if (currentH > 0) {
-                                val relY = (change.position.y / currentH).coerceIn(0f, 1f)
-                                val newLevel = (((1f - relY) * 3.999f).toInt() + 1).coerceIn(1, 4)
+            // Right section: Interactive horizontal optical beam + curved arc handle
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            isDragging = true
+                            val w = size.width.toFloat()
+                            if (w > 0f) {
+                                val relX = (down.position.x / w).coerceIn(0f, 1f)
+                                dragFraction = relX.coerceIn(0.20f, 1f)
+                                val newLevel = ((relX * 3.999f).toInt() + 1).coerceIn(1, 4)
                                 if (newLevel != currentLevelState.value) {
                                     currentLevel = newLevel
                                     view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                     onSetLevelState.value(newLevel)
                                 }
                             }
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                if (!change.pressed) break
+                                change.consume()
+                                val currentW = size.width.toFloat()
+                                if (currentW > 0f) {
+                                    val relX = (change.position.x / currentW).coerceIn(0f, 1f)
+                                    dragFraction = relX.coerceIn(0.20f, 1f)
+                                    val newLevel = ((relX * 3.999f).toInt() + 1).coerceIn(1, 4)
+                                    if (newLevel != currentLevelState.value) {
+                                        currentLevel = newLevel
+                                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                        onSetLevelState.value(newLevel)
+                                    }
+                                }
+                            }
+                            isDragging = false
                         }
-                    }
-                },
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 4.dp, bottom = 0.dp)
-                    .blur(radius = 8.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                    },
+                contentAlignment = Alignment.CenterStart
             ) {
-                val w = size.width
-                val h = size.height
-                val centerX = w / 2f
-
-                val blurpleTint = Color(0xFFD2D6FF)
-
-                // Geometry:
-                // Maximum widths at full brightness (level 4):
-                val maxSecTopHalfW = (w * 0.18f).coerceAtMost(52.dp.toPx())
-                val secBaseHalfW = 7.dp.toPx()
-
-                val maxPrimTopHalfW = (w * 0.09f).coerceAtMost(26.dp.toPx())
-                val primBaseHalfW = 3.5.dp.toPx()
-
-                // Width expands dynamically with brightness, maxing out at current width for level 4!
-                val widthFactor = 0.35f + 0.65f * animatedFraction
-                val currentSecTopHalfW = maxSecTopHalfW * widthFactor
-                val currentPrimTopHalfW = maxPrimTopHalfW * widthFactor
-
-                // 1. Background guide cone: subtle blurple tint, fades away at the top!
-                val guideOuterPath = Path().apply {
-                    moveTo(centerX - secBaseHalfW - 3.dp.toPx(), h)
-                    lineTo(centerX - maxSecTopHalfW - 6.dp.toPx(), 0f)
-                    quadraticTo(centerX, -4.dp.toPx(), centerX + maxSecTopHalfW + 6.dp.toPx(), 0f)
-                    lineTo(centerX + secBaseHalfW + 3.dp.toPx(), h)
-                    close()
-                }
-                drawPath(
-                    path = guideOuterPath,
-                    brush = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.0f to Color.Transparent, // Fades away at the top!
-                            0.20f to blurpleTint.copy(alpha = 0.03f),
-                            0.60f to blurpleTint.copy(alpha = 0.05f),
-                            1.0f to Color.Transparent
-                        ),
-                        startY = 0f,
-                        endY = h
-                    )
-                )
-
-                val guidePath = Path().apply {
-                    moveTo(centerX - secBaseHalfW, h)
-                    lineTo(centerX - maxSecTopHalfW, 0f)
-                    quadraticTo(centerX, -4.dp.toPx(), centerX + maxSecTopHalfW, 0f)
-                    lineTo(centerX + secBaseHalfW, h)
-                    close()
-                }
-                drawPath(
-                    path = guidePath,
-                    brush = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.0f to Color.Transparent, // Fades away at the top!
-                            0.18f to blurpleTint.copy(alpha = 0.08f),
-                            0.55f to blurpleTint.copy(alpha = 0.13f),
-                            1.0f to blurpleTint.copy(alpha = 0.04f)
-                        ),
-                        startY = 0f,
-                        endY = h
-                    )
-                )
-
-                // 2. Active illuminated beams filling up to animatedFraction (1..4)
-                val activeH = h * animatedFraction
-                val activeTopY = h - activeH
-                val activeSecTopHalfW = secBaseHalfW + (currentSecTopHalfW - secBaseHalfW) * animatedFraction
-                val activePrimTopHalfW = primBaseHalfW + (currentPrimTopHalfW - primBaseHalfW) * animatedFraction
-
-                // Dynamic fade distance at top: fades away at top, but fade reduces when less bright
-                val fadeLength = (28.dp.toPx() * animatedFraction).coerceAtMost(activeH * 0.40f).coerceAtLeast(4.dp.toPx())
-                val fadeStop = (fadeLength / activeH).coerceIn(0.04f, 0.45f)
-
-                // Diffused outer atmospheric halo
-                val haloSpread = 5.dp.toPx() * animatedFraction
-                val haloPath = Path().apply {
-                    moveTo(centerX - secBaseHalfW - 2.dp.toPx(), h)
-                    lineTo(centerX - activeSecTopHalfW - haloSpread, activeTopY)
-                    quadraticTo(centerX, activeTopY - 4.dp.toPx(), centerX + activeSecTopHalfW + haloSpread, activeTopY)
-                    lineTo(centerX + secBaseHalfW + 2.dp.toPx(), h)
-                    close()
-                }
-                drawPath(
-                    path = haloPath,
-                    brush = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.0f to Color.Transparent,
-                            fadeStop to Color.White.copy(alpha = 0.12f * animatedFraction),
-                            1.0f to Color.Transparent
-                        ),
-                        startY = activeTopY,
-                        endY = h
-                    )
-                )
-
-                // 3. Secondary beam: slightly less bright, same width as now (realistic spill beam)
-                val secBeamPath = Path().apply {
-                    moveTo(centerX - secBaseHalfW, h)
-                    lineTo(centerX - activeSecTopHalfW, activeTopY)
-                    quadraticTo(centerX, activeTopY - 3.dp.toPx(), centerX + activeSecTopHalfW, activeTopY)
-                    lineTo(centerX + secBaseHalfW, h)
-                    close()
-                }
-                val secIntensity = 0.32f + 0.22f * animatedFraction
-                drawPath(
-                    path = secBeamPath,
-                    brush = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.0f to Color.Transparent, // Fades away at the top!
-                            fadeStop to Color.White.copy(alpha = 0.35f * secIntensity),
-                            0.60f to Color.White.copy(alpha = 0.24f * secIntensity),
-                            1.0f to Color.White.copy(alpha = 0.08f * secIntensity)
-                        ),
-                        startY = activeTopY,
-                        endY = h
-                    )
-                )
-
-                // 4. Primary core beam: half as thin again, brilliant hotspot, fades away at the top
-                val primBeamPath = Path().apply {
-                    moveTo(centerX - primBaseHalfW, h)
-                    lineTo(centerX - activePrimTopHalfW, activeTopY)
-                    quadraticTo(centerX, activeTopY - 2.dp.toPx(), centerX + activePrimTopHalfW, activeTopY)
-                    lineTo(centerX + primBaseHalfW, h)
-                    close()
-                }
-                val primIntensity = 0.70f + 0.30f * animatedFraction
-                drawPath(
-                    path = primBeamPath,
-                    brush = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.0f to Color.Transparent, // Fades away at the top!
-                            fadeStop to Color.White.copy(alpha = 0.96f * primIntensity),
-                            0.65f to Color.White.copy(alpha = 0.78f * primIntensity),
-                            1.0f to Color.White.copy(alpha = 0.45f * primIntensity)
-                        ),
-                        startY = activeTopY,
-                        endY = h
-                    )
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // Bottom section: Large centered flashlight icon (NO dark circle background, NO radial glow in standard)
-        // In Material 3, framed in an expressive Clover shape
-        val (flashBtnInteraction, flashBtnBounce) = rememberBounceButtonState()
-        val flashBtnShape = if (designLanguage == DesignLanguage.MATERIAL3) M3CloverShape else CircleShape
-        Box(
-            modifier = Modifier
-                .padding(bottom = 8.dp)
-                .size(64.dp)
-                .then(flashBtnBounce)
-                .then(
-                    if (designLanguage == DesignLanguage.MATERIAL3) {
-                        Modifier
-                            .clip(flashBtnShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
-                    } else Modifier
-                )
-                .clickable(
-                    interactionSource = flashBtnInteraction,
-                    indication = null
+                // Layer 1: Blurred volumetric light cone (no guide cone to the right of arc)
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(radius = 9.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
                 ) {
-                    onTurnOff()
-                    onCollapse()
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.FlashlightOn,
-                contentDescription = "Turn off flashlight",
-                tint = Color.White,
-                modifier = Modifier.size(46.dp)
-            )
+                    val w = size.width
+                    val h = size.height
+                    if (w <= 0f || h <= 0f) return@Canvas
+                    val centerY = h / 2f
+
+                    val baseHalfH = 5.5.dp.toPx()
+                    val farHalfH = (h * 0.40f * (0.68f + 0.32f * animatedFraction)).coerceAtMost(h * 0.46f)
+                    val arcX = (w * animatedFraction).coerceIn(20.dp.toPx(), (w - 10.dp.toPx()).coerceAtLeast(20.dp.toPx()))
+                    val arcBulge = 4.5.dp.toPx()
+                    val intensity = 0.48f + 0.52f * animatedFraction
+
+                    // 1. Outer atmospheric haze cone
+                    val hazeHalfH = (farHalfH + 5.dp.toPx()).coerceAtMost(h * 0.54f)
+                    val hazePath = Path().apply {
+                        moveTo(0f, centerY - baseHalfH - 2.dp.toPx())
+                        lineTo(arcX, centerY - hazeHalfH)
+                        quadraticTo(arcX + arcBulge * 1.3f, centerY, arcX, centerY + hazeHalfH)
+                        lineTo(0f, centerY + baseHalfH + 2.dp.toPx())
+                        close()
+                    }
+                    drawPath(
+                        path = hazePath,
+                        brush = Brush.horizontalGradient(
+                            colorStops = arrayOf(
+                                0.0f to beamColor.copy(alpha = 0.22f * intensity),
+                                0.65f to beamColor.copy(alpha = 0.16f * intensity),
+                                1.0f to beamColor.copy(alpha = 0.04f * intensity)
+                            ),
+                            startX = 0f,
+                            endX = arcX + arcBulge
+                        )
+                    )
+
+                    // 2. Main volumetric light body reaching right up to arcX
+                    val mainPath = Path().apply {
+                        moveTo(0f, centerY - baseHalfH)
+                        lineTo(arcX, centerY - farHalfH)
+                        quadraticTo(arcX + arcBulge, centerY, arcX, centerY + farHalfH)
+                        lineTo(0f, centerY + baseHalfH)
+                        close()
+                    }
+                    drawPath(
+                        path = mainPath,
+                        brush = Brush.horizontalGradient(
+                            colorStops = arrayOf(
+                                0.0f to beamColor.copy(alpha = 0.58f * intensity),
+                                0.50f to beamColor.copy(alpha = 0.42f * intensity),
+                                0.90f to beamColor.copy(alpha = 0.26f * intensity),
+                                1.0f to beamColor.copy(alpha = 0.08f * intensity)
+                            ),
+                            startX = 0f,
+                            endX = arcX + arcBulge
+                        )
+                    )
+
+                    // 3. Bright central optical core
+                    val coreBaseHalfH = 2.8.dp.toPx()
+                    val coreFarHalfH = farHalfH * 0.45f
+                    val corePath = Path().apply {
+                        moveTo(0f, centerY - coreBaseHalfH)
+                        lineTo(arcX, centerY - coreFarHalfH)
+                        quadraticTo(arcX + arcBulge * 0.7f, centerY, arcX, centerY + coreFarHalfH)
+                        lineTo(0f, centerY + coreBaseHalfH)
+                        close()
+                    }
+                    drawPath(
+                        path = corePath,
+                        brush = Brush.horizontalGradient(
+                            colorStops = arrayOf(
+                                0.0f to Color.White.copy(alpha = 0.85f * intensity),
+                                0.55f to beamColor.copy(alpha = 0.52f * intensity),
+                                1.0f to beamColor.copy(alpha = 0.14f * intensity)
+                            ),
+                            startX = 0f,
+                            endX = arcX + arcBulge
+                        )
+                    )
+
+                    // 4. Soft blurred glow along the curved arc
+                    val arcHalfH = farHalfH * 0.84f
+                    val glowArcPath = Path().apply {
+                        moveTo(arcX, centerY - arcHalfH)
+                        quadraticTo(arcX + arcBulge, centerY, arcX, centerY + arcHalfH)
+                    }
+                    drawPath(
+                        path = glowArcPath,
+                        color = arcColor.copy(alpha = 0.40f * intensity),
+                        style = Stroke(width = 4.5.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+
+                // Layer 2: Crisp curved brightness arc handle
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    if (w <= 0f || h <= 0f) return@Canvas
+                    val centerY = h / 2f
+
+                    val farHalfH = (h * 0.40f * (0.68f + 0.32f * animatedFraction)).coerceAtMost(h * 0.46f)
+                    val arcX = (w * animatedFraction).coerceIn(20.dp.toPx(), (w - 10.dp.toPx()).coerceAtLeast(20.dp.toPx()))
+                    val arcBulge = 4.5.dp.toPx()
+                    val arcHalfH = farHalfH * 0.84f
+
+                    val arcPath = Path().apply {
+                        moveTo(arcX, centerY - arcHalfH)
+                        quadraticTo(arcX + arcBulge, centerY, arcX, centerY + arcHalfH)
+                    }
+
+                    // Subtle halo stroke
+                    drawPath(
+                        path = arcPath,
+                        color = arcColor.copy(alpha = 0.25f),
+                        style = Stroke(width = 3.8.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                    // Crisp primary arc
+                    drawPath(
+                        path = arcPath,
+                        color = arcColor,
+                        style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+            }
         }
     }
 }
@@ -4553,26 +4841,18 @@ fun ExpandedMediaView(
         Color(0xFFE5E5EA)
     }
 
-    val playButtonBg = if (mediaAccentColor != Color.Transparent) {
+    val sliderActiveTint = if (mediaAccentColor != Color.Transparent) {
         lerp(Color.White, mediaAccentColor, 0.28f)
     } else {
         Color.White
     }
 
-    val playButtonIconTint = if (mediaAccentColor != Color.Transparent) {
-        lerp(Color.Black, mediaAccentColor, 0.15f)
-    } else {
-        Color.Black
-    }
+    val playButtonBg = sliderActiveTint.copy(alpha = 0.10f)
+
+    val playButtonIconTint = Color.White
 
     val eqTint = if (mediaAccentColor != Color.Transparent) {
         lerp(Color(0xFFE5E5EA), mediaAccentColor, 0.50f)
-    } else {
-        Color(0xFFE5E5EA)
-    }
-
-    val sliderActiveTint = if (mediaAccentColor != Color.Transparent) {
-        lerp(Color(0xFFE5E5EA), mediaAccentColor, 0.55f)
     } else {
         Color(0xFFE5E5EA)
     }
@@ -4624,6 +4904,40 @@ fun ExpandedMediaView(
 
     val resolvedLayers = if (mediaLayersOrder.isNotEmpty()) mediaLayersOrder else DEFAULT_MEDIA_LAYERS
 
+    val trackKey = "${media?.packageName.orEmpty()}|${media?.title.orEmpty()}|${media?.artist.orEmpty()}"
+    var shownArt by remember { mutableStateOf(displayArt) }
+    var lastTrackKey by remember { mutableStateOf(trackKey) }
+    val artFlipRotationY = remember { Animatable(0f) }
+
+    LaunchedEffect(trackKey) {
+        if (trackKey != lastTrackKey) {
+            lastTrackKey = trackKey
+            val targetArt = displayArt
+            artFlipRotationY.snapTo(0f)
+            val swapJob = launch {
+                kotlinx.coroutines.delay(175L)
+                shownArt = targetArt
+            }
+            artFlipRotationY.animateTo(
+                targetValue = 738f,
+                animationSpec = tween(durationMillis = 390, easing = CubicBezierEasing(0.22f, 0.90f, 0.30f, 1.0f))
+            )
+            swapJob.cancel()
+            shownArt = targetArt
+            artFlipRotationY.animateTo(
+                targetValue = 720f,
+                animationSpec = spring(dampingRatio = 0.56f, stiffness = 460f)
+            )
+            artFlipRotationY.snapTo(0f)
+        }
+    }
+
+    LaunchedEffect(displayArt) {
+        if (!artFlipRotationY.isRunning) {
+            shownArt = displayArt
+        }
+    }
+
     val headerLayer: @Composable () -> Unit = {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -4633,6 +4947,8 @@ fun ExpandedMediaView(
                 modifier = Modifier
                     .size(artSize)
                     .graphicsLayer {
+                        cameraDistance = 12f * density
+                        rotationY = artFlipRotationY.value
                         if (spinningAlbumArt || vinylFraction > 0.01f) {
                             rotationZ = vinylRotation.value * vinylFraction
                         }
@@ -4645,9 +4961,9 @@ fun ExpandedMediaView(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                if (displayArt != null) {
+                if (shownArt != null) {
                     Image(
-                        bitmap = displayArt.asImageBitmap(),
+                        bitmap = shownArt!!.asImageBitmap(),
                         contentDescription = "Cover Art",
                         modifier = Modifier.fillMaxSize()
                     )
@@ -4717,7 +5033,11 @@ fun ExpandedMediaView(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            EqualizerVisualizer(isPlaying = media?.isPlaying == true, barColor = eqTint)
+            EqualizerVisualizer(
+                isPlaying = media?.isPlaying == true,
+                barColor = eqTint,
+                albumArt = displayArt
+            )
         }
     }
 
@@ -4792,13 +5112,35 @@ fun ExpandedMediaView(
                     },
                     thumb = {
                         if (hasValidDuration) {
-                            Box(
-                                modifier = Modifier
-                                    .width(3.dp)
-                                    .height(14.dp)
-                                    .clip(RoundedCornerShape(1.5.dp))
-                                    .background(sliderActiveTint)
-                            )
+                            Canvas(modifier = Modifier.size(22.dp)) {
+                                val glowCenter = center
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            sliderActiveTint.copy(alpha = 0.55f),
+                                            sliderActiveTint.copy(alpha = 0.22f),
+                                            Color.Transparent
+                                        ),
+                                        center = glowCenter,
+                                        radius = 11.dp.toPx()
+                                    ),
+                                    radius = 11.dp.toPx(),
+                                    center = glowCenter
+                                )
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.95f),
+                                            sliderActiveTint.copy(alpha = 0.65f),
+                                            Color.Transparent
+                                        ),
+                                        center = glowCenter,
+                                        radius = 5.5.dp.toPx()
+                                    ),
+                                    radius = 5.5.dp.toPx(),
+                                    center = glowCenter
+                                )
+                            }
                         }
                     },
                     track = { sliderState ->
@@ -4947,20 +5289,36 @@ fun ExpandedMediaView(
                     targetState = activeLyricLine.text,
                     transitionSpec = {
                         (slideInVertically(
-                            initialOffsetY = { fullHeight -> (fullHeight * 0.65f).toInt() },
-                            animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)
-                        ) + fadeIn(tween(180))) togetherWith (slideOutVertically(
-                            targetOffsetY = { fullHeight -> -(fullHeight * 0.65f).toInt() },
-                            animationSpec = tween(150)
-                        ) + fadeOut(tween(140)))
+                            initialOffsetY = { fullHeight -> (fullHeight * 0.95f).toInt() },
+                            animationSpec = tween(durationMillis = 360, easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f))
+                        ) + fadeIn(tween(durationMillis = 300, easing = FastOutSlowInEasing))) togetherWith
+                        (slideOutVertically(
+                            targetOffsetY = { fullHeight -> -(fullHeight * 0.95f).toInt() },
+                            animationSpec = tween(durationMillis = 320, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f))
+                        ) + fadeOut(tween(durationMillis = 260, easing = FastOutSlowInEasing)))
                     },
                     label = "karaokeLineTransition"
                 ) { lineText ->
+                    val blurRadius by transition.animateDp(
+                        transitionSpec = { tween(durationMillis = 320, easing = FastOutSlowInEasing) },
+                        label = "karaokeBlur"
+                    ) { state ->
+                        when (state) {
+                            EnterExitState.Visible -> 0.dp
+                            EnterExitState.PreEnter -> 6.dp
+                            EnterExitState.PostExit -> 6.dp
+                        }
+                    }
                     Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White.copy(alpha = 0.08f))
-                            .padding(horizontal = 10.dp, vertical = 3.dp),
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .then(
+                                if (blurRadius > 0.1.dp) {
+                                    Modifier.blur(blurRadius, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                                } else {
+                                    Modifier
+                                }
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
@@ -4968,13 +5326,13 @@ fun ExpandedMediaView(
                             imageVector = Icons.Default.MusicNote,
                             contentDescription = null,
                             tint = lyricHighlightTint.copy(alpha = 0.85f),
-                            modifier = Modifier.size((13.dp * scale).coerceIn(11.dp, 15.dp))
+                            modifier = Modifier.size((14.dp * scale).coerceIn(12.dp, 16.dp))
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = lineText,
                             color = lyricHighlightTint,
-                            fontSize = (12.5f * scale).coerceIn(11f, 14.5f).sp,
+                            fontSize = (13.8f * scale).coerceIn(12.5f, 16f).sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             modifier = Modifier.basicMarquee(
@@ -5023,7 +5381,14 @@ fun ExpandedChargingView(
         "Charging"
     }
 
-    val iconSize = (32.dp * scale).coerceIn(26.dp, 38.dp)
+    val targetProgress = ((charging?.percentage ?: 100).toFloat() / 100f).coerceIn(0f, 1f)
+    val animatedProgress by animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 260f),
+        label = "expandedChargingRingProgress"
+    )
+
+    val ringSize = (46.dp * scale).coerceIn(38.dp, 54.dp)
     val iconGap = (12.dp * scale).coerceIn(8.dp, 16.dp)
     val numberSize = (24f * scale).coerceIn(20f, 28f).sp
     val subtitleSize = (13f * scale).coerceIn(11.5f, 15f).sp
@@ -5040,25 +5405,105 @@ fun ExpandedChargingView(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier
-                    .size(iconSize)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(
-                                mintChargingGreen.copy(alpha = 0.40f),
-                                mintChargingGreen.copy(alpha = 0.12f),
-                                Color.Transparent
-                            )
-                        ),
-                        shape = CircleShape
-                    ),
+                modifier = Modifier.size(ringSize),
                 contentAlignment = Alignment.Center
             ) {
+                // Soft inner radial glow behind the bolt
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.radialGradient(
+                                listOf(
+                                    mintChargingGreen.copy(alpha = 0.24f),
+                                    Color.Transparent
+                                )
+                            ),
+                            shape = CircleShape
+                        )
+                )
+
+                // Blurred glowing progressed arc layer
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(radius = 5.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                ) {
+                    val inset = 3.5.dp.toPx()
+                    val arcDiam = size.minDimension - inset * 2f
+                    if (arcDiam > 0f && animatedProgress > 0.005f) {
+                        drawArc(
+                            color = mintChargingGreen.copy(alpha = 0.85f),
+                            startAngle = -90f,
+                            sweepAngle = 360f * animatedProgress,
+                            useCenter = false,
+                            topLeft = Offset(inset, inset),
+                            size = Size(arcDiam, arcDiam),
+                            style = Stroke(width = 5.5.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+                }
+
+                // Crisp ring layer
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val inset = 3.5.dp.toPx()
+                    val arcDiam = size.minDimension - inset * 2f
+                    if (arcDiam <= 0f) return@Canvas
+                    val topLeft = Offset(inset, inset)
+                    val arcSize = Size(arcDiam, arcDiam)
+
+                    // Unprogressed track ring
+                    drawArc(
+                        color = Color.White.copy(alpha = 0.14f),
+                        startAngle = 0f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(width = 3.2.dp.toPx())
+                    )
+
+                    // Crisp progressed arc
+                    if (animatedProgress > 0.005f) {
+                        drawArc(
+                            color = Color(0xFF96F7B6),
+                            startAngle = -90f,
+                            sweepAngle = 360f * animatedProgress,
+                            useCenter = false,
+                            topLeft = topLeft,
+                            size = arcSize,
+                            style = Stroke(width = 3.2.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+
+                    // Bright leading-tip pinpoint glow
+                    if (animatedProgress > 0.02f) {
+                        val angleRad = Math.toRadians((-90.0 + 360.0 * animatedProgress))
+                        val radius = arcDiam / 2f
+                        val cx = size.width / 2f + (radius * cos(angleRad)).toFloat()
+                        val cy = size.height / 2f + (radius * sin(angleRad)).toFloat()
+                        val tipCenter = Offset(cx, cy)
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.95f),
+                                    mintChargingGreen.copy(alpha = 0.70f),
+                                    Color.Transparent
+                                ),
+                                center = tipCenter,
+                                radius = 5.dp.toPx()
+                            ),
+                            radius = 5.dp.toPx(),
+                            center = tipCenter
+                        )
+                    }
+                }
+
                 Icon(
                     imageVector = Icons.Default.Bolt,
                     contentDescription = "Charging",
                     tint = Color(0xFFB8FFD0),
-                    modifier = Modifier.size((22.dp * scale).coerceIn(18.dp, 26.dp))
+                    modifier = Modifier.size((20.dp * scale).coerceIn(16.dp, 24.dp))
                 )
             }
 
@@ -5538,17 +5983,25 @@ fun ExpandedProgressView(
                 .clickable { openProgressApp() },
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val hasIconBitmap = notification?.iconBitmap != null
             Box(
                 modifier = Modifier
                     .size(iconSize)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF212121)),
+                    .then(
+                        if (!hasIconBitmap) {
+                            Modifier.background(Color(0xFF212121))
+                        } else {
+                            Modifier
+                        }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 if (notification?.iconBitmap != null) {
                     Image(
                         bitmap = notification.iconBitmap.asImageBitmap(),
                         contentDescription = "App Icon",
+                        contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
@@ -5568,6 +6021,17 @@ fun ExpandedProgressView(
             val progPctColor = if (designLanguage == DesignLanguage.MATERIAL3) MaterialTheme.colorScheme.primary else Color(0xFF64D2FF)
             val progBarColor = if (designLanguage == DesignLanguage.MATERIAL3) MaterialTheme.colorScheme.primary else Color(0xFFE5E5EA)
             val progTrackColor = if (designLanguage == DesignLanguage.MATERIAL3) MaterialTheme.colorScheme.surfaceVariant else Color(0xFF2C2C2E)
+
+            val cleanTrackColor = if (designLanguage == DesignLanguage.MATERIAL3) {
+                MaterialTheme.colorScheme.surfaceVariant
+            } else {
+                Color.White.copy(alpha = 0.14f)
+            }
+            val animatedProgress by animateFloatAsState(
+                targetValue = progressFraction,
+                animationSpec = spring(dampingRatio = 0.85f, stiffness = 320f),
+                label = "expandedProgressFill"
+            )
 
             Column(
                 modifier = Modifier.weight(1f),
@@ -5620,21 +6084,29 @@ fun ExpandedProgressView(
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
+                            .height(3.5.dp)
                             .clip(RoundedCornerShape(2.dp)),
                         color = progBarColor,
-                        trackColor = progTrackColor
+                        trackColor = cleanTrackColor,
+                        strokeCap = StrokeCap.Round,
+                        gapSize = 0.dp
                     )
                 } else {
-                    LinearProgressIndicator(
-                        progress = { progressFraction },
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp)),
-                        color = progBarColor,
-                        trackColor = progTrackColor
-                    )
+                            .height(3.5.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(cleanTrackColor)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(progBarColor)
+                        )
+                    }
                 }
             }
         }
@@ -5703,24 +6175,6 @@ fun ExpandedProgressView(
                     )
                 }
             }
-
-            BouncyFilledTonalButton(
-                onClick = { openProgressApp() },
-                modifier = Modifier.size(circleButtonSize),
-                shape = progActionShape,
-                contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = if (designLanguage == DesignLanguage.MATERIAL3) MaterialTheme.colorScheme.surfaceContainerHighest else Color(0xFFE5E5EA),
-                    contentColor = if (designLanguage == DesignLanguage.MATERIAL3) MaterialTheme.colorScheme.onSurface else Color.Black
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.OpenInNew,
-                    contentDescription = "Open",
-                    tint = if (designLanguage == DesignLanguage.MATERIAL3) MaterialTheme.colorScheme.onSurface else Color.Black,
-                    modifier = Modifier.size(actionIconSize)
-                )
-            }
         }
     }
 }
@@ -5749,7 +6203,12 @@ fun ExpandedRecordingView(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Start
         ) {
-            PulsingRecordingDot(modifier = Modifier.size(11.dp))
+            Box(
+                modifier = Modifier.size(18.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                PulsingRecordingDot(modifier = Modifier.size(11.dp))
+            }
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = timerText,
@@ -5993,99 +6452,143 @@ fun PulsingRecordingDot(modifier: Modifier = Modifier, dotColor: Color = Color(0
 }
 
 @Composable
-fun EqualizerVisualizer(isPlaying: Boolean, barColor: Color = Color(0xFFE5E5EA)) {
-    if (!isPlaying) {
-        // Zero CPU usage when paused: render static equalizer bars without triggering infinite frame recompositions
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.height(16.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height((16 * 0.3f).dp)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(barColor)
-            )
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height((16 * 0.5f).dp)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(barColor)
-            )
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height((16 * 0.2f).dp)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(barColor)
-            )
-        }
-        return
+fun EqualizerVisualizer(
+    isPlaying: Boolean,
+    barColor: Color = Color(0xFFE5E5EA),
+    albumArt: Bitmap? = null
+) {
+    val blurredArt = remember(albumArt) {
+        albumArt?.let { createBlurredBitmap(it) ?: it }
+    }
+    val artImageBitmap = remember(blurredArt) {
+        blurredArt?.asImageBitmap()
     }
 
-    val transition = rememberInfiniteTransition(label = "eq_bars")
+    val h1: Float
+    val h2: Float
+    val h3: Float
+    if (!isPlaying) {
+        // Zero CPU usage when paused: render static equalizer bars without triggering infinite frame recompositions
+        h1 = 0.3f
+        h2 = 0.5f
+        h3 = 0.2f
+    } else {
+        val transition = rememberInfiniteTransition(label = "eq_bars")
+        val animH1 by transition.animateFloat(
+            initialValue = 0.2f,
+            targetValue = 0.9f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(450, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "h1"
+        )
+        val animH2 by transition.animateFloat(
+            initialValue = 0.8f,
+            targetValue = 0.3f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(380, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "h2"
+        )
+        val animH3 by transition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(520, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "h3"
+        )
+        h1 = animH1
+        h2 = animH2
+        h3 = animH3
+    }
 
-    val h1 by transition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 0.9f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(450, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "h1"
-    )
-    val h2 by transition.animateFloat(
-        initialValue = 0.8f,
-        targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(380, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "h2"
-    )
-    val h3 by transition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(520, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "h3"
-    )
-
-    val currentH1 = if (isPlaying) h1 else 0.3f
-    val currentH2 = if (isPlaying) h2 else 0.5f
-    val currentH3 = if (isPlaying) h3 else 0.2f
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        modifier = Modifier.height(16.dp)
+    Canvas(
+        modifier = Modifier
+            .width(13.dp)
+            .height(16.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height((16 * currentH1).dp)
-                .clip(RoundedCornerShape(1.5.dp))
-                .background(barColor)
-        )
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height((16 * currentH2).dp)
-                .clip(RoundedCornerShape(1.5.dp))
-                .background(barColor)
-        )
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height((16 * currentH3).dp)
-                .clip(RoundedCornerShape(1.5.dp))
-                .background(barColor)
-        )
+        val barWidth = 3.dp.toPx()
+        val gap = 2.dp.toPx()
+        val corner = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx())
+        val heights = floatArrayOf(h1, h2, h3)
+
+        val barsPath = Path().apply {
+            for (i in 0 until 3) {
+                val barH = (size.height * heights[i]).coerceAtLeast(3.dp.toPx())
+                val left = i * (barWidth + gap)
+                val top = (size.height - barH) / 2f
+                addRoundRect(
+                    RoundRect(
+                        left = left,
+                        top = top,
+                        right = left + barWidth,
+                        bottom = top + barH,
+                        cornerRadius = corner
+                    )
+                )
+            }
+        }
+
+        clipPath(barsPath) {
+            if (artImageBitmap != null) {
+                drawImage(
+                    image = artImageBitmap,
+                    dstSize = IntSize(
+                        size.width.roundToInt().coerceAtLeast(1),
+                        size.height.roundToInt().coerceAtLeast(1)
+                    )
+                )
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.30f),
+                            Color.White.copy(alpha = 0.08f)
+                        )
+                    )
+                )
+            } else {
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            lerp(barColor, Color.White, 0.35f),
+                            barColor,
+                            Color(0xFF64D2FF),
+                            Color(0xFFBF5AF2)
+                        ),
+                        start = Offset.Zero,
+                        end = Offset(size.width, size.height)
+                    )
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            Color(0xFFFF375F).copy(alpha = 0.55f),
+                            Color.Transparent
+                        ),
+                        center = Offset(size.width * 0.15f, size.height * 0.85f),
+                        radius = size.maxDimension * 0.8f
+                    ),
+                    radius = size.maxDimension * 0.8f,
+                    center = Offset(size.width * 0.15f, size.height * 0.85f)
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.45f),
+                            Color.Transparent
+                        ),
+                        center = Offset(size.width * 0.85f, size.height * 0.15f),
+                        radius = size.maxDimension * 0.7f
+                    ),
+                    radius = size.maxDimension * 0.7f,
+                    center = Offset(size.width * 0.85f, size.height * 0.15f)
+                )
+            }
+        }
     }
 }
 
@@ -6332,10 +6835,10 @@ fun WavyMediaScrubber(
         val maxAmpPx = 2.7.dp.toPx() * waveAmpFraction
 
         // Inactive flat track from thumbX to w
-        if (thumbX < w - 2.dp.toPx()) {
+        if (thumbX < w - 1.dp.toPx()) {
             drawLine(
                 color = if (enabled) inactiveColor else inactiveColor.copy(alpha = 0.35f),
-                start = Offset((thumbX + 4.dp.toPx()).coerceAtMost(w), centerY),
+                start = Offset(thumbX.coerceAtLeast(0f), centerY),
                 end = Offset(w, centerY),
                 strokeWidth = strokeW,
                 cap = StrokeCap.Round
@@ -6381,18 +6884,34 @@ fun WavyMediaScrubber(
             }
         }
 
-        // Vertical pill thumb
+        // Luminous radial glow at the scrub point (replaces solid handle)
         if (enabled) {
-            val thumbW = 3.2.dp.toPx()
-            val thumbH = 14.dp.toPx()
-            drawRoundRect(
-                color = activeColor,
-                topLeft = Offset(
-                    x = (thumbX - thumbW / 2f).coerceIn(0f, (w - thumbW).coerceAtLeast(0f)),
-                    y = centerY - thumbH / 2f
+            val glowCenter = Offset(thumbX.coerceIn(0f, w), centerY)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        activeColor.copy(alpha = 0.55f),
+                        activeColor.copy(alpha = 0.22f),
+                        Color.Transparent
+                    ),
+                    center = glowCenter,
+                    radius = 11.dp.toPx()
                 ),
-                size = androidx.compose.ui.geometry.Size(thumbW, thumbH),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(thumbW / 2f, thumbW / 2f)
+                radius = 11.dp.toPx(),
+                center = glowCenter
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.95f),
+                        activeColor.copy(alpha = 0.65f),
+                        Color.Transparent
+                    ),
+                    center = glowCenter,
+                    radius = 5.5.dp.toPx()
+                ),
+                radius = 5.5.dp.toPx(),
+                center = glowCenter
             )
         }
     }
@@ -7072,7 +7591,7 @@ private fun AirplaneModePill(
 }
 
 @Composable
-private fun GlassBottomHighlight(
+private fun GlassEdgeHighlight(
     glassEnabled: Boolean,
     glassOpacity: Int,
     cornerRadius: Dp,

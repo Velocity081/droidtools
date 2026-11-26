@@ -2,6 +2,7 @@ package com.droidbubble.app.ui.main
 
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -52,9 +53,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.AnimatedContent
@@ -69,6 +73,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -601,7 +606,7 @@ fun MainScreen(
 
                 val animatedOverscroll by animateFloatAsState(
                     targetValue = if (selectedRootTab == 0) overscrollOffset else 0f,
-                    animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow),
+                    animationSpec = spring(dampingRatio = 0.80f, stiffness = 280f),
                     label = "overscrollOffset"
                 )
 
@@ -658,9 +663,10 @@ fun MainScreen(
                 }
 
                 val expandProgress = (animatedOverscroll / 70f).coerceIn(0f, 1f)
+                val smoothProgress = CubicBezierEasing(0.22f, 1f, 0.36f, 1f).transform(expandProgress)
                 val appVersion = remember { com.droidbubble.app.util.UpdateManager.getCurrentVersion(context) }
-                val titleSize = (20f + (expandProgress * 8f)).sp
-                val topBarHeight = (64.dp + (expandProgress * 36).dp)
+                val titleSize = (20f + (smoothProgress * 8f)).sp
+                val headerContentHeight = (56.dp + (smoothProgress * 44f).dp)
                 val density = LocalDensity.current
 
                 Scaffold(
@@ -670,17 +676,17 @@ fun MainScreen(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(topBarHeight)
                                     .background(MaterialTheme.colorScheme.background)
                                     .statusBarsPadding()
-                                    .padding(horizontal = 20.dp),
+                                    .height(headerContentHeight)
+                                    .padding(horizontal = 20.dp, vertical = 8.dp),
                                 contentAlignment = BiasAlignment(
-                                    horizontalBias = -1f + expandProgress,
+                                    horizontalBias = -1f + smoothProgress,
                                     verticalBias = 0f
                                 )
                             ) {
                                 Column(
-                                    horizontalAlignment = if (expandProgress > 0.35f) Alignment.CenterHorizontally else Alignment.Start,
+                                    horizontalAlignment = BiasAlignment.Horizontal(-1f + smoothProgress),
                                     verticalArrangement = Arrangement.Center
                                 ) {
                                     Text(
@@ -688,14 +694,25 @@ fun MainScreen(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = titleSize,
                                         color = MaterialTheme.colorScheme.onBackground,
-                                        letterSpacing = if (expandProgress > 0.05f) (0.5.sp * expandProgress) else 0.sp
+                                        letterSpacing = if (smoothProgress > 0.05f) (0.5.sp * smoothProgress) else 0.sp
                                     )
-                                    if (expandProgress > 0.02f) {
+                                    Spacer(modifier = Modifier.height((smoothProgress * 4f).dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .height((smoothProgress * 22f).dp)
+                                            .graphicsLayer {
+                                                alpha = smoothProgress
+                                                val s = 0.90f + 0.10f * smoothProgress
+                                                scaleX = s
+                                                scaleY = s
+                                                translationY = (1f - smoothProgress) * -4.dp.toPx()
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         Text(
                                             text = "v$appVersion",
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = expandProgress),
-                                            modifier = Modifier.graphicsLayer { alpha = expandProgress }
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
@@ -878,7 +895,7 @@ fun MainScreen(
                                                     )
                                                 }
 
-                                                SettingsCardItem(position = GroupPosition.MIDDLE) {
+                                                SettingsCardItem(position = GroupPosition.BOTTOM) {
                                                     ListItem(
                                                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                                         headlineContent = { Text("Tasks", fontWeight = FontWeight.SemiBold) },
@@ -896,8 +913,22 @@ fun MainScreen(
                                                         modifier = Modifier.clickable { showTasksPage = true }
                                                     )
                                                 }
+                                            }
+                                        }
 
-                                                SettingsCardItem(position = GroupPosition.MIDDLE) {
+                                        item {
+                                            SectionHeader(
+                                                title = "System",
+                                                icon = Icons.Default.Settings
+                                            )
+                                        }
+
+                                        item {
+                                            Column(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                            ) {
+                                                SettingsCardItem(position = GroupPosition.TOP) {
                                                     ListItem(
                                                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                                         headlineContent = { Text("Display settings", fontWeight = FontWeight.SemiBold) },
@@ -2281,14 +2312,16 @@ fun ShortFloatingBottomNav(
         border = BorderStroke(1.dp, veryLightBorder)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+            modifier = Modifier
+                .padding(horizontal = 7.dp, vertical = 6.dp)
+                .animateContentSize(animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             val tabs = listOf(
                 Triple(0, Icons.Default.Settings, "Droidtools"),
                 Triple(1, Icons.Default.Smartphone, "Device Info"),
-                Triple(2, Icons.Default.CloudDownload, "GitHub App Updates")
+                Triple(2, Icons.Default.CloudDownload, "Updates")
             )
             tabs.forEach { (idx, icon, label) ->
                 val isSelected = selectedTab == idx
@@ -2300,18 +2333,26 @@ fun ShortFloatingBottomNav(
                     targetValue = if (isSelected) selectedIconLight else unselectedIconDark,
                     label = "floatingNavFg"
                 )
+                val hPad by animateDpAsState(
+                    targetValue = if (isSelected) 16.dp else 12.dp,
+                    animationSpec = spring(dampingRatio = 0.80f, stiffness = 440f),
+                    label = "navPad"
+                )
                 Surface(
                     modifier = Modifier
-                        .size(46.dp)
+                        .height(46.dp)
                         .clip(CircleShape)
                         .clickable { onSelectTab(idx) },
                     shape = CircleShape,
                     color = itemBg,
                     contentColor = itemFg
                 ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        modifier = Modifier
+                            .height(46.dp)
+                            .padding(horizontal = hPad),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
                         Icon(
                             imageVector = icon,
@@ -2319,6 +2360,31 @@ fun ShortFloatingBottomNav(
                             tint = itemFg,
                             modifier = Modifier.size(22.dp)
                         )
+                        AnimatedVisibility(
+                            visible = isSelected,
+                            enter = expandHorizontally(
+                                animationSpec = spring(dampingRatio = 0.74f, stiffness = 460f),
+                                expandFrom = Alignment.Start,
+                                clip = false
+                            ) + fadeIn(animationSpec = tween(170)),
+                            exit = shrinkHorizontally(
+                                animationSpec = tween(170, easing = FastOutSlowInEasing),
+                                shrinkTowards = Alignment.Start,
+                                clip = true
+                            ) + fadeOut(animationSpec = tween(110))
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Spacer(modifier = Modifier.width(7.dp))
+                                Text(
+                                    text = label,
+                                    color = itemFg,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -3253,6 +3319,25 @@ fun AppearancePage(
                                     checked = settings.bubbleEffectEnabled,
                                     onCheckedChange = { enabled ->
                                         onUpdateSettings { it.copy(bubbleEffectEnabled = enabled) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE, isActive = settings.liquidTouchEffect) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Liquid Touch Effect", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text("Slightly shrinks expanded cards and adds a subtle liquid glow under your finger when interacting", style = MaterialTheme.typography.bodySmall) },
+                            leadingContent = {
+                                Icon(Icons.Default.RoundedCorner, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.liquidTouchEffect,
+                                    onCheckedChange = { enabled ->
+                                        onUpdateSettings { it.copy(liquidTouchEffect = enabled) }
                                     }
                                 )
                             }

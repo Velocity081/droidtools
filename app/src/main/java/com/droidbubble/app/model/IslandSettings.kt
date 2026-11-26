@@ -57,6 +57,7 @@ data class IslandSettings(
     val blockedPackages: Set<String> = emptySet(),
     val restartOnBoot: Boolean = true,
     val bubbleEffectEnabled: Boolean = true,
+    val liquidTouchEffect: Boolean = false,
     val dismissMediaOnPause: Boolean = false,
     val alwaysShowPill: Boolean = false,
     val showDualActivityInCompact: Boolean = true,

@@ -792,7 +792,7 @@ class IslandOverlayService : Service() {
         val isDeviceLocked = IslandStateManager.isDeviceLocked.value
         val allowedInOrientation = currentSettings.isEnabled && (currentSettings.showInLandscape || !isLandscape) && (!currentSettings.hideOnLockScreen || !isDeviceLocked)
         val isOccupied = IslandStateManager.isOccupied && allowedInOrientation
-        val hasPersistentWidgets = (currentSettings.showFps || currentSettings.showWeather || currentSettings.showNetworkSpeed) && allowedInOrientation
+        val hasPersistentWidgets = (currentSettings.showFps || currentSettings.showWeather || currentSettings.showNetworkSpeed || (currentSettings.showAlarm && IslandStateManager.isAlarmActive) || (currentSettings.persistentCharging && IslandStateManager.isPersistentChargingActive)) && allowedInOrientation
         val shouldShowCompact = (isOccupied || currentSettings.alwaysShowPill || hasPersistentWidgets) && allowedInOrientation
 
         val mainHalf = (currentSettings.widthDp * 0.90f).coerceAtLeast(80f) / 2f
@@ -867,7 +867,8 @@ class IslandOverlayService : Service() {
                                 liveSettings.showFps ||
                                 liveSettings.showWeather ||
                                 liveSettings.showNetworkSpeed ||
-                                (liveSettings.showAlarm && IslandStateManager.isAlarmActive)
+                                (liveSettings.showAlarm && IslandStateManager.isAlarmActive) ||
+                                (liveSettings.persistentCharging && IslandStateManager.isPersistentChargingActive)
                             touchManager?.updateCompactBounds(
                                 rects = rects,
                                 occupied = interactive,
@@ -1136,7 +1137,7 @@ class IslandOverlayService : Service() {
                 }
             }
 
-            if (isCharging || isUnlock || isBluetooth || isRingerMode || isAirplaneMode || isClipboard) {
+            if (isTemporaryCharging || isUnlock || isBluetooth || isRingerMode || isAirplaneMode || isClipboard) {
                 isCollapsing = false
                 collapseJob?.cancel()
             } else if (isCollapsing) {

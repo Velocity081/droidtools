@@ -51,6 +51,7 @@ class SettingsRepository(private val context: Context) {
         val BLOCKED_PACKAGES = stringSetPreferencesKey("blocked_packages")
         val RESTART_ON_BOOT = booleanPreferencesKey("restart_on_boot")
         val BUBBLE_EFFECT_ENABLED = booleanPreferencesKey("bubble_effect_enabled")
+        val LIQUID_TOUCH_EFFECT = booleanPreferencesKey("liquid_touch_effect")
         val DISMISS_MEDIA_ON_PAUSE = booleanPreferencesKey("dismiss_media_on_pause")
         val ALWAYS_SHOW_PILL = booleanPreferencesKey("always_show_pill")
         val SHOW_DUAL_ACTIVITY_IN_COMPACT = booleanPreferencesKey("show_dual_activity_in_compact")
@@ -139,6 +140,7 @@ class SettingsRepository(private val context: Context) {
             blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
             restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true,
             bubbleEffectEnabled = preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] ?: true,
+            liquidTouchEffect = preferences[PreferencesKeys.LIQUID_TOUCH_EFFECT] ?: false,
             dismissMediaOnPause = preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] ?: false,
             alwaysShowPill = preferences[PreferencesKeys.ALWAYS_SHOW_PILL] ?: false,
             showDualActivityInCompact = preferences[PreferencesKeys.SHOW_DUAL_ACTIVITY_IN_COMPACT] ?: true,
@@ -251,6 +253,7 @@ class SettingsRepository(private val context: Context) {
                 blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
                 restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true,
                 bubbleEffectEnabled = preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] ?: true,
+                liquidTouchEffect = preferences[PreferencesKeys.LIQUID_TOUCH_EFFECT] ?: false,
                 dismissMediaOnPause = preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] ?: false,
                 alwaysShowPill = preferences[PreferencesKeys.ALWAYS_SHOW_PILL] ?: false,
                 showDualActivityInCompact = preferences[PreferencesKeys.SHOW_DUAL_ACTIVITY_IN_COMPACT] ?: true,
@@ -354,6 +357,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.BLOCKED_PACKAGES] = newSettings.blockedPackages
             preferences[PreferencesKeys.RESTART_ON_BOOT] = newSettings.restartOnBoot
             preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] = newSettings.bubbleEffectEnabled
+            preferences[PreferencesKeys.LIQUID_TOUCH_EFFECT] = newSettings.liquidTouchEffect
             preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] = newSettings.dismissMediaOnPause
             preferences[PreferencesKeys.ALWAYS_SHOW_PILL] = newSettings.alwaysShowPill
             preferences[PreferencesKeys.SHOW_DUAL_ACTIVITY_IN_COMPACT] = newSettings.showDualActivityInCompact
