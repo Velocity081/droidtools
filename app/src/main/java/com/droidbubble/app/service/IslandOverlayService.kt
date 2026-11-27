@@ -23,6 +23,7 @@ import android.os.IBinder
 import kotlin.math.roundToInt
 import android.provider.Settings
 import com.droidbubble.app.model.ActiveCallState
+import com.droidbubble.app.model.ActiveTimerState
 import com.droidbubble.app.model.MediaInfo
 import com.droidbubble.app.model.NotificationInfo
 import com.droidbubble.app.model.ScreenRecordingState
@@ -110,6 +111,10 @@ class IslandOverlayService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var settingsRepository: SettingsRepository
     private var windowManager: WindowManager? = null
+    private var displayManager: android.hardware.display.DisplayManager? = null
+    private var displayListener: android.hardware.display.DisplayManager.DisplayListener? = null
+    private var lastDisplayRotation: Int = android.view.Surface.ROTATION_0
+    private var lastIsLandscape: Boolean = false
     private var composeView: ComposeView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var droidbarView: ComposeView? = null
@@ -213,6 +218,7 @@ class IslandOverlayService : Service() {
                     IslandStateManager.updateNotification(null)
                     IslandStateManager.updateRecordingState(ScreenRecordingState(isRecording = false))
                     IslandStateManager.updateCallState(ActiveCallState(isActive = false))
+                    IslandStateManager.updateTimerState(ActiveTimerState(isActive = false))
                     IslandStateManager.updateFlashlightState(false)
                     IslandStateManager.collapse()
                 }
@@ -639,6 +645,7 @@ class IslandOverlayService : Service() {
         createNotificationChannel()
         initCameraTorch()
         initClipboardListener()
+        initDisplayRotationListener()
         startAutoUpdateChecker()
         startSystemToolsScheduleChecker()
         initSystemToolsOverlaysObserver()
@@ -716,8 +723,55 @@ class IslandOverlayService : Service() {
         return START_STICKY
     }
 
+    private fun getCurrentDisplayRotation(): Int {
+        val dm = displayManager ?: (getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager)?.also {
+            displayManager = it
+        }
+        val displayRot = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.rotation
+        if (displayRot != null) return displayRot
+        return composeView?.display?.rotation ?: run {
+            @Suppress("DEPRECATION")
+            windowManager?.defaultDisplay?.rotation ?: android.view.Surface.ROTATION_0
+        }
+    }
+
+    private fun initDisplayRotationListener() {
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager ?: return
+        displayManager = dm
+        lastDisplayRotation = getCurrentDisplayRotation()
+        lastIsLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        IslandStateManager.updateDisplayRotation(lastDisplayRotation)
+
+        val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+            override fun onDisplayRemoved(displayId: Int) = Unit
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId != android.view.Display.DEFAULT_DISPLAY) return
+                val newRotation = getCurrentDisplayRotation()
+                if (newRotation != lastDisplayRotation) {
+                    lastDisplayRotation = newRotation
+                    IslandStateManager.updateDisplayRotation(newRotation)
+                    collapseJob?.cancel()
+                    isCollapsing = false
+                    updateWindowState(IslandStateManager.isExpanded.value)
+                }
+            }
+        }
+        displayListener = listener
+        dm.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        val newIsLandscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val newRotation = getCurrentDisplayRotation()
+        lastDisplayRotation = newRotation
+        IslandStateManager.updateDisplayRotation(newRotation)
+        if (newIsLandscape != lastIsLandscape) {
+            lastIsLandscape = newIsLandscape
+            collapseJob?.cancel()
+            isCollapsing = false
+        }
         updateWindowState(IslandStateManager.isExpanded.value)
     }
 
@@ -916,8 +970,9 @@ class IslandOverlayService : Service() {
                     IslandStateManager.isDeviceLocked,
                     IslandStateManager.alarmInfo,
                     IslandStateManager.activeTaskConfirmation,
-                    IslandStateManager.activeClipboardEvent
-                ) { _, _, _, _ -> Unit }
+                    IslandStateManager.activeClipboardEvent,
+                    IslandStateManager.activeTimerState
+                ) { _, _, _, _, _ -> Unit }
             ) { expanded, _, _, _ -> expanded }.collectLatest { expanded ->
                 updateWindowState(expanded)
             }
@@ -979,10 +1034,7 @@ class IslandOverlayService : Service() {
             ((totalWidthDp + 2f * kotlin.math.abs(currentSettings.horizontalOffsetDp)) * density).toInt()
         }
         return if (isLandscape) {
-            val rotation = composeView?.display?.rotation ?: run {
-                @Suppress("DEPRECATION")
-                windowManager?.defaultDisplay?.rotation ?: android.view.Surface.ROTATION_0
-            }
+            val rotation = getCurrentDisplayRotation()
             val gravity = if (rotation == android.view.Surface.ROTATION_270) {
                 Gravity.RIGHT or Gravity.CENTER_VERTICAL
             } else {
@@ -1085,6 +1137,7 @@ class IslandOverlayService : Service() {
                     (currentSettings.showNotifications && IslandStateManager.isNotificationActive) ||
                     (currentSettings.showLiveProgress && IslandStateManager.isProgressActive) ||
                     (currentSettings.showScreenRecording && IslandStateManager.isRecordingActive) ||
+                    (currentSettings.showTimer && IslandStateManager.isTimerActive) ||
                     isFlashlight ||
                     isCharging ||
                     isUnlock ||
@@ -1350,6 +1403,11 @@ override fun onDestroy() {
         }
         primaryClipListener = null
         clipboardManager = null
+        displayListener?.let { listener ->
+            runCatching { displayManager?.unregisterDisplayListener(listener) }
+        }
+        displayListener = null
+        displayManager = null
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

@@ -11,8 +11,8 @@ android {
         applicationId = "com.droidbubble.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 16
-        versionName = "2.2"
+        versionCode = 17
+        versionName = "2.2.1"
     }
 
     buildTypes {

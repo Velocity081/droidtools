@@ -76,9 +76,27 @@ data class ActiveCallState(
     val contentIntent: PendingIntent? = null
 )
 
+data class ActiveTimerState(
+    val isActive: Boolean = false,
+    val label: String = "Timer",
+    val remainingMs: Long = 0L,
+    val endTimeElapsedMs: Long = 0L,
+    val isPaused: Boolean = false,
+    val isFinished: Boolean = false,
+    val packageName: String = "",
+    val contentIntent: PendingIntent? = null
+) {
+    fun computeRemainingMs(nowElapsedMs: Long = runCatching { android.os.SystemClock.elapsedRealtime() }.getOrDefault(0L)): Long {
+        if (isFinished) return 0L
+        if (isPaused || endTimeElapsedMs <= 0L) return remainingMs.coerceAtLeast(0L)
+        return (endTimeElapsedMs - nowElapsedMs).coerceAtLeast(0L)
+    }
+}
+
 enum class IslandPriority {
     CALL,
     SCREEN_RECORDING,
+    TIMER,
     PROGRESS,
     POP_NOTIFICATION,
     MEDIA,

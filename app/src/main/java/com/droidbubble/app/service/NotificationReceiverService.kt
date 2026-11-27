@@ -2,6 +2,7 @@ package com.droidbubble.app.service
 
 import android.app.ActivityOptions
 import android.app.Notification
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -18,12 +19,21 @@ import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.Chronometer
+import android.widget.FrameLayout
+import android.widget.RemoteViews
+import android.widget.TextView
 import com.droidbubble.app.data.SettingsRepository
 import com.droidbubble.app.island.IslandStateManager
 import com.droidbubble.app.model.ActiveCallState
+import com.droidbubble.app.model.ActiveTimerState
 import com.droidbubble.app.model.IslandSettings
 import com.droidbubble.app.model.MediaInfo
 import com.droidbubble.app.model.NotificationAction
@@ -221,6 +231,14 @@ class NotificationReceiverService : NotificationListenerService() {
         } catch (e: Exception) {
             Log.e("NotificationReceiver", "Error registering media session listener", e)
         }
+        runCatching {
+            activeNotifications?.forEach { sbn ->
+                val notif = sbn.notification
+                if (notif != null && isTimerNotification(sbn, notif) && currentSettings.showTimer) {
+                    handleTimerNotification(sbn)
+                }
+            }
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -249,6 +267,7 @@ class NotificationReceiverService : NotificationListenerService() {
         activeMediaController = null
         recordingTimerJob?.cancel()
         callTimerJob?.cancel()
+        timerTickJob?.cancel()
         serviceScope.cancel()
     }
 
@@ -583,6 +602,349 @@ class NotificationReceiverService : NotificationListenerService() {
     private var activeEndCallAction: Notification.Action? = null
     private var activeMuteOrSpeakerAction: Notification.Action? = null
 
+    private var systemTimerKey: String? = null
+    private var timerTickJob: Job? = null
+    private var activeTimerPauseAction: PendingIntent? = null
+    private var activeTimerResumeAction: PendingIntent? = null
+    private var activeTimerEndAction: PendingIntent? = null
+
+    private data class TimerRemoteViewsData(
+        val chronometerBaseElapsedMs: Long = 0L,
+        val isChronometerCountDown: Boolean = false,
+        val parsedDurationMs: Long? = null,
+        val isNegativeOvertime: Boolean = false,
+        val extractedTexts: List<String> = emptyList(),
+        val labelCandidate: String? = null
+    )
+
+    private fun isTimerNotification(sbn: StatusBarNotification, notification: Notification): Boolean {
+        val pkg = sbn.packageName.lowercase(java.util.Locale.ROOT)
+        val extras = notification.extras ?: return false
+        val isCountdown = extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false)
+        val isClockPkg = pkg.contains("deskclock") || pkg.contains("clock") || pkg.contains("timer")
+        if (!isClockPkg && !isCountdown) return false
+
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.lowercase(java.util.Locale.ROOT) ?: ""
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.lowercase(java.util.Locale.ROOT) ?: ""
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.lowercase(java.util.Locale.ROOT) ?: ""
+        val channelId = notification.channelId?.lowercase(java.util.Locale.ROOT) ?: ""
+        val combined = "$title $text $subText $channelId"
+
+        if (combined.contains("stopwatch") || combined.contains("upcoming alarm") || combined.contains("alarm in")) {
+            return false
+        }
+
+        if (isCountdown) return true
+
+        val actionTitles = notification.actions?.mapNotNull { it?.title?.toString()?.lowercase(java.util.Locale.ROOT) } ?: emptyList()
+        val hasTimerAction = actionTitles.any {
+            it.contains("pause") || it.contains("resume") || it.contains("start") ||
+                    it.contains("stop") || it.contains("delete") || it.contains("reset") || it.contains("add 1")
+        }
+        val hasTimerKeyword = combined.contains("timer") || combined.contains("time's up") || combined.contains("countdown")
+        return hasTimerKeyword || (isClockPkg && (hasTimerAction || channelId.contains("timer")))
+    }
+
+    private fun parseDurationMsFromText(text: String): Long? {
+        val colonMatch = Regex("""(?<![+\-])\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b""").find(text)
+        if (colonMatch != null) {
+            val h = colonMatch.groupValues[1].toLongOrNull() ?: 0L
+            val m = colonMatch.groupValues[2].toLongOrNull() ?: 0L
+            val s = colonMatch.groupValues[3].toLongOrNull() ?: 0L
+            return ((h * 3600L) + (m * 60L) + s) * 1000L
+        }
+
+        val unitRegex = Regex("""(?<![+\-])\b(\d+)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes|s|sec|secs|second|seconds)\b""", RegexOption.IGNORE_CASE)
+        val matches = unitRegex.findAll(text).toList()
+        if (matches.isEmpty()) return null
+
+        var totalSeconds = 0L
+        var matchedAny = false
+        for (match in matches) {
+            val value = match.groupValues[1].toLongOrNull() ?: continue
+            val unit = match.groupValues[2].lowercase(java.util.Locale.ROOT)
+            when {
+                unit.startsWith("h") -> {
+                    totalSeconds += value * 3600L
+                    matchedAny = true
+                }
+                unit.startsWith("m") -> {
+                    totalSeconds += value * 60L
+                    matchedAny = true
+                }
+                unit.startsWith("s") -> {
+                    totalSeconds += value
+                    matchedAny = true
+                }
+            }
+        }
+        return if (matchedAny) totalSeconds * 1000L else null
+    }
+
+    private fun extractTimerFromRemoteViews(
+        sbn: StatusBarNotification,
+        notification: Notification,
+        nowElapsed: Long
+    ): TimerRemoteViewsData {
+        val remoteViewsList = mutableListOf<RemoteViews>()
+        @Suppress("DEPRECATION")
+        notification.contentView?.let { remoteViewsList.add(it) }
+        @Suppress("DEPRECATION")
+        notification.bigContentView?.let { remoteViewsList.add(it) }
+        @Suppress("DEPRECATION")
+        notification.headsUpContentView?.let { remoteViewsList.add(it) }
+
+        if (remoteViewsList.isEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            runCatching {
+                val builder = Notification.Builder.recoverBuilder(this, notification)
+                builder.createContentView()?.let { remoteViewsList.add(it) }
+                builder.createBigContentView()?.let { remoteViewsList.add(it) }
+            }
+        }
+
+        if (remoteViewsList.isEmpty()) return TimerRemoteViewsData()
+
+        val pkgContext = runCatching {
+            createPackageContext(sbn.packageName, Context.CONTEXT_IGNORE_SECURITY)
+        }.getOrDefault(this)
+
+        var bestChronoBase = 0L
+        var bestChronoCountdown = false
+        var bestParsedDuration: Long? = null
+        var isNegativeOvertime = false
+        val extractedTexts = mutableListOf<String>()
+        var labelCandidate: String? = null
+
+        val actionWords = setOf(
+            "pause", "resume", "start", "stop", "delete", "reset", "dismiss", "cancel", "end",
+            "+1:00", "+ 1:00", "+1 min", "add 1 min"
+        )
+
+        fun visitView(view: View) {
+            if (view.visibility != View.VISIBLE) return
+            when (view) {
+                is Chronometer -> {
+                    val base = view.base
+                    val isCd = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) view.isCountDown else false
+                    if (base > 0L && (bestChronoBase == 0L || (base > nowElapsed && bestChronoBase <= nowElapsed))) {
+                        bestChronoBase = base
+                        bestChronoCountdown = isCd
+                    }
+                    val cText = view.text?.toString()?.trim().orEmpty()
+                    if (cText.isNotEmpty()) {
+                        extractedTexts.add(cText)
+                        if (cText.startsWith("-") || cText.startsWith("−")) {
+                            isNegativeOvertime = true
+                        } else if (bestParsedDuration == null) {
+                            bestParsedDuration = parseDurationMsFromText(cText)
+                        }
+                    }
+                }
+                is TextView -> {
+                    if (view !is Button) {
+                        val t = view.text?.toString()?.trim().orEmpty()
+                        val lower = t.lowercase(java.util.Locale.ROOT)
+                        if (t.isNotEmpty() && lower !in actionWords && !lower.startsWith("+")) {
+                            extractedTexts.add(t)
+                            if (t.startsWith("-") || t.startsWith("−")) {
+                                isNegativeOvertime = true
+                            } else {
+                                val parsed = parseDurationMsFromText(t)
+                                if (parsed != null && bestParsedDuration == null) {
+                                    bestParsedDuration = parsed
+                                } else if (parsed == null && labelCandidate == null &&
+                                    !lower.equals("timer", ignoreCase = true) &&
+                                    !lower.contains("paused") &&
+                                    !lower.contains("time's up") &&
+                                    !lower.contains("expired")
+                                ) {
+                                    labelCandidate = t
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (view is ViewGroup) {
+                for (i in 0 until view.childCount) {
+                    visitView(view.getChildAt(i))
+                }
+            }
+        }
+
+        for (rv in remoteViewsList) {
+            val inflated = runCatching { rv.apply(pkgContext, FrameLayout(pkgContext)) }.getOrNull() ?: continue
+            visitView(inflated)
+        }
+
+        return TimerRemoteViewsData(
+            chronometerBaseElapsedMs = bestChronoBase,
+            isChronometerCountDown = bestChronoCountdown,
+            parsedDurationMs = bestParsedDuration,
+            isNegativeOvertime = isNegativeOvertime,
+            extractedTexts = extractedTexts,
+            labelCandidate = labelCandidate
+        )
+    }
+
+    private fun handleTimerNotification(sbn: StatusBarNotification) {
+        val notification = sbn.notification ?: return
+        val extras = notification.extras ?: return
+        systemTimerKey = sbn.key
+
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val rvData = extractTimerFromRemoteViews(sbn, notification, nowElapsed)
+
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
+        val summaryText = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()?.trim().orEmpty()
+        val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString()?.trim().orEmpty()
+        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            ?.mapNotNull { it?.toString()?.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
+
+        val allExtraTexts = listOf(title, text, bigText, subText, summaryText, infoText) + textLines
+        val combined = (allExtraTexts + rvData.extractedTexts)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .lowercase(java.util.Locale.ROOT)
+
+        var pauseIntent: PendingIntent? = null
+        var resumeIntent: PendingIntent? = null
+        var endIntent: PendingIntent? = null
+        notification.actions?.forEach { action ->
+            val actTitle = action?.title?.toString()?.lowercase(java.util.Locale.ROOT) ?: return@forEach
+            val pi = action.actionIntent ?: return@forEach
+            when {
+                actTitle.contains("pause") -> pauseIntent = pi
+                actTitle.contains("resume") || actTitle.contains("start") -> resumeIntent = pi
+                actTitle.contains("stop") || actTitle.contains("delete") || actTitle.contains("dismiss") ||
+                        actTitle.contains("cancel") || actTitle.contains("reset") || actTitle.contains("end") -> {
+                    if (endIntent == null || actTitle.contains("stop") || actTitle.contains("delete")) {
+                        endIntent = pi
+                    }
+                }
+            }
+        }
+        activeTimerPauseAction = pauseIntent
+        activeTimerResumeAction = resumeIntent
+        activeTimerEndAction = endIntent
+
+        val isPaused = resumeIntent != null || combined.contains("paused")
+        val isCountdown = extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false)
+        val showChronometer = extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false)
+        val pkg = sbn.packageName.lowercase(java.util.Locale.ROOT)
+        val isClockPkg = pkg.contains("deskclock") || pkg.contains("clock") || pkg.contains("timer")
+
+        val parsedExtrasMs = allExtraTexts.firstNotNullOfOrNull { parseDurationMsFromText(it) }
+        val prevState = IslandStateManager.activeTimerState.value
+
+        val remainingMs = when {
+            !isPaused && rvData.chronometerBaseElapsedMs > nowElapsed ->
+                (rvData.chronometerBaseElapsedMs - nowElapsed).coerceAtLeast(0L)
+            !isPaused && (isCountdown || showChronometer) && notification.`when` > nowWall ->
+                (notification.`when` - nowWall).coerceAtLeast(0L)
+            !isPaused && isClockPkg && notification.`when` > nowWall + 500L ->
+                (notification.`when` - nowWall).coerceAtLeast(0L)
+            rvData.parsedDurationMs != null ->
+                rvData.parsedDurationMs
+            isPaused && rvData.chronometerBaseElapsedMs > nowElapsed ->
+                (rvData.chronometerBaseElapsedMs - nowElapsed).coerceAtLeast(0L)
+            parsedExtrasMs != null ->
+                parsedExtrasMs
+            prevState.isActive && prevState.packageName == sbn.packageName && !prevState.isFinished ->
+                prevState.computeRemainingMs(nowElapsed)
+            else -> 0L
+        }
+
+        val isFinished = !isPaused && (
+            combined.contains("time's up") ||
+            combined.contains("expired") ||
+            combined.contains("timer finished") ||
+            rvData.isNegativeOvertime ||
+            (remainingMs == 0L && (combined.contains("00:00") || combined.contains("0:00")))
+        )
+        val endTimeElapsedMs = if (!isPaused && !isFinished && remainingMs > 0L) nowElapsed + remainingMs else 0L
+
+        val label = when {
+            title.isNotBlank() && parseDurationMsFromText(title) == null && !title.equals("Timer", ignoreCase = true) -> title
+            !rvData.labelCandidate.isNullOrBlank() -> rvData.labelCandidate
+            else -> "Timer"
+        }
+
+        IslandStateManager.updateTimerState(
+            ActiveTimerState(
+                isActive = true,
+                label = label,
+                remainingMs = remainingMs,
+                endTimeElapsedMs = endTimeElapsedMs,
+                isPaused = isPaused,
+                isFinished = isFinished,
+                packageName = sbn.packageName,
+                contentIntent = notification.contentIntent
+            )
+        )
+
+        IslandStateManager.onTogglePauseTimer = {
+            val cur = IslandStateManager.activeTimerState.value
+            val targetPi = if (cur.isPaused) activeTimerResumeAction else activeTimerPauseAction
+            runCatching { targetPi?.send() }
+            val nowE = SystemClock.elapsedRealtime()
+            val curRem = cur.computeRemainingMs(nowE)
+            if (cur.isPaused) {
+                IslandStateManager.updateTimerState(
+                    cur.copy(
+                        isPaused = false,
+                        remainingMs = curRem,
+                        endTimeElapsedMs = if (curRem > 0L) nowE + curRem else 0L
+                    )
+                )
+            } else {
+                IslandStateManager.updateTimerState(
+                    cur.copy(
+                        isPaused = true,
+                        remainingMs = curRem,
+                        endTimeElapsedMs = 0L
+                    )
+                )
+            }
+        }
+
+        IslandStateManager.onEndTimer = {
+            runCatching { activeTimerEndAction?.send() }
+            systemTimerKey = null
+            timerTickJob?.cancel()
+            timerTickJob = null
+            activeTimerPauseAction = null
+            activeTimerResumeAction = null
+            activeTimerEndAction = null
+            IslandStateManager.updateTimerState(ActiveTimerState(isActive = false))
+        }
+
+        timerTickJob?.cancel()
+        if (!isPaused && !isFinished && endTimeElapsedMs > 0L) {
+            timerTickJob = serviceScope.launch {
+                while (isActive) {
+                    delay(500L)
+                    val cur = IslandStateManager.activeTimerState.value
+                    if (!cur.isActive || cur.isPaused || cur.isFinished) break
+                    val rem = cur.computeRemainingMs()
+                    IslandStateManager.updateTimerState(
+                        cur.copy(
+                            remainingMs = rem,
+                            isFinished = rem <= 0L
+                        )
+                    )
+                    if (rem <= 0L) break
+                }
+            }
+        }
+    }
+
     private fun isOngoingCallNotification(sbn: StatusBarNotification, notification: Notification): Boolean {
         val isOngoing = sbn.isOngoing ||
                 (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 ||
@@ -907,7 +1269,7 @@ class NotificationReceiverService : NotificationListenerService() {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
         val lightingCfg = com.droidbubble.app.tools.SystemToolsManager.getInstance(this).notificationLightingConfig.value
-        if (!currentSettings.showNotifications && !currentSettings.showLiveProgress && !currentSettings.showScreenRecording && !currentSettings.showCalls && !lightingCfg.enabled) return
+        if (!currentSettings.showNotifications && !currentSettings.showLiveProgress && !currentSettings.showScreenRecording && !currentSettings.showCalls && !currentSettings.showTimer && !lightingCfg.enabled) return
 
         val packageName = sbn.packageName
         if (packageName == this.packageName) return // Ignore self
@@ -954,6 +1316,22 @@ class NotificationReceiverService : NotificationListenerService() {
             activeEndCallAction = null
             activeMuteOrSpeakerAction = null
             IslandStateManager.updateCallState(ActiveCallState(isActive = false))
+        }
+
+        // 1C. Detect active device timer notifications
+        if (isTimerNotification(sbn, notification)) {
+            if (currentSettings.showTimer) {
+                handleTimerNotification(sbn)
+            }
+            return
+        } else if (systemTimerKey == sbn.key) {
+            systemTimerKey = null
+            timerTickJob?.cancel()
+            timerTickJob = null
+            activeTimerPauseAction = null
+            activeTimerResumeAction = null
+            activeTimerEndAction = null
+            IslandStateManager.updateTimerState(ActiveTimerState(isActive = false))
         }
 
         // 2. Skip media notifications (Media controls are handled exclusively via MediaSessionManager with slider & controls)
@@ -1083,6 +1461,15 @@ class NotificationReceiverService : NotificationListenerService() {
             activeEndCallAction = null
             activeMuteOrSpeakerAction = null
             IslandStateManager.updateCallState(ActiveCallState(isActive = false))
+        }
+        if (systemTimerKey == sbn.key || (sbn.notification != null && isTimerNotification(sbn, sbn.notification))) {
+            systemTimerKey = null
+            timerTickJob?.cancel()
+            timerTickJob = null
+            activeTimerPauseAction = null
+            activeTimerResumeAction = null
+            activeTimerEndAction = null
+            IslandStateManager.updateTimerState(ActiveTimerState(isActive = false))
         }
         val notifObj = sbn.notification
         if (notifObj != null && (isMediaNotification(sbn, notifObj) || sbn.packageName == activeMediaController?.packageName)) {

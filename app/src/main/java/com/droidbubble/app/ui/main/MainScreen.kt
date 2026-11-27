@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Screenshot
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.ui.graphics.lerp
@@ -666,7 +667,7 @@ fun MainScreen(
                 val smoothProgress = CubicBezierEasing(0.22f, 1f, 0.36f, 1f).transform(expandProgress)
                 val appVersion = remember { com.droidbubble.app.util.UpdateManager.getCurrentVersion(context) }
                 val titleSize = (20f + (smoothProgress * 8f)).sp
-                val headerContentHeight = (56.dp + (smoothProgress * 44f).dp)
+                val headerContentHeight = (56.dp + (smoothProgress * 58f).dp)
                 val density = LocalDensity.current
 
                 Scaffold(
@@ -697,9 +698,9 @@ fun MainScreen(
                                         letterSpacing = if (smoothProgress > 0.05f) (0.5.sp * smoothProgress) else 0.sp
                                     )
                                     Spacer(modifier = Modifier.height((smoothProgress * 4f).dp))
-                                    Box(
+                                    Column(
                                         modifier = Modifier
-                                            .height((smoothProgress * 22f).dp)
+                                            .height((smoothProgress * 36f).dp)
                                             .graphicsLayer {
                                                 alpha = smoothProgress
                                                 val s = 0.90f + 0.10f * smoothProgress
@@ -707,8 +708,14 @@ fun MainScreen(
                                                 scaleY = s
                                                 translationY = (1f - smoothProgress) * -4.dp.toPx()
                                             },
-                                        contentAlignment = Alignment.Center
+                                        horizontalAlignment = BiasAlignment.Horizontal(-1f + smoothProgress),
+                                        verticalArrangement = Arrangement.Center
                                     ) {
+                                        Text(
+                                            text = "By Velcon",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                        )
                                         Text(
                                             text = "v$appVersion",
                                             style = MaterialTheme.typography.labelMedium,
@@ -1348,6 +1355,7 @@ fun MainScreen(
                                 "FLASHLIGHT" -> settings.showFlashlight
                                 "PERSISTENT_CHARGING" -> settings.persistentCharging
                                 "ALARM" -> settings.showAlarm
+                                "TIMER" -> settings.showTimer
                                 "FPS" -> settings.showFps
                                 "WEATHER" -> settings.showWeather
                                 "NETWORK_SPEED" -> settings.showNetworkSpeed
@@ -1363,6 +1371,7 @@ fun MainScreen(
                                 "FLASHLIGHT" -> "Flashlight Indicator"
                                 "PERSISTENT_CHARGING" -> "Persistent Charging"
                                 "ALARM" -> "Upcoming Alarms"
+                                "TIMER" -> "Timers"
                                 "FPS" -> "FPS Counter"
                                 "WEATHER" -> "Weather & Temperature"
                                 "NETWORK_SPEED" -> "Wi-Fi & Network Speed"
@@ -1378,6 +1387,7 @@ fun MainScreen(
                                 "FLASHLIGHT" -> Icons.Default.FlashlightOn
                                 "PERSISTENT_CHARGING" -> Icons.Default.Bolt
                                 "ALARM" -> Icons.Default.Alarm
+                                "TIMER" -> Icons.Default.Timer
                                 "FPS" -> Icons.Default.Speed
                                 "WEATHER" -> Icons.Default.WbSunny
                                 "NETWORK_SPEED" -> Icons.Default.Wifi
@@ -1495,6 +1505,7 @@ fun MainScreen(
                                                         "NETWORK_SPEED" -> s.copy(showNetworkSpeed = checked)
                                                         "PERSISTENT_CHARGING" -> s.copy(persistentCharging = checked)
                                                         "ALARM" -> s.copy(showAlarm = checked)
+                                                        "TIMER" -> s.copy(showTimer = checked)
                                                         else -> s
                                                     }
                                                 }
@@ -3329,7 +3340,6 @@ fun AppearancePage(
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Liquid Touch Effect", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Slightly shrinks expanded cards and adds a subtle liquid glow under your finger when interacting", style = MaterialTheme.typography.bodySmall) },
                             leadingContent = {
                                 Icon(Icons.Default.RoundedCorner, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
@@ -3348,7 +3358,6 @@ fun AppearancePage(
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Dual Activity on Minimised Island", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Shows secondary bubble; when off, shows only priority activity until expanded", style = MaterialTheme.typography.bodySmall) },
                             leadingContent = {
                                 Icon(Icons.Default.Widgets, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
@@ -4295,7 +4304,6 @@ fun MediaPlayerCustomizationPage(
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("1-Line Karaoke Lyrics", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Shows synced per-line lyrics when available", style = MaterialTheme.typography.bodySmall) },
                             leadingContent = {
                                 Icon(Icons.Default.Subtitles, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
@@ -4310,7 +4318,7 @@ fun MediaPlayerCustomizationPage(
                         )
                     }
 
-                    SettingsCardItem(position = GroupPosition.BOTTOM, isActive = settings.blurredAlbumArtBackground) {
+                    SettingsCardItem(position = GroupPosition.MIDDLE, isActive = settings.blurredAlbumArtBackground) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Blurred Album Art Background", fontWeight = FontWeight.SemiBold) },
@@ -4322,6 +4330,24 @@ fun MediaPlayerCustomizationPage(
                                     checked = settings.blurredAlbumArtBackground,
                                     onCheckedChange = { blurred ->
                                         onUpdateSettings { it.copy(blurredAlbumArtBackground = blurred) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM, isActive = settings.mediaBlurEqualizer) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Album Blur Equalizer", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.GraphicEq, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.mediaBlurEqualizer,
+                                    onCheckedChange = { enabled ->
+                                        onUpdateSettings { it.copy(mediaBlurEqualizer = enabled) }
                                     }
                                 )
                             }
@@ -4799,13 +4825,6 @@ fun DroidbarAppsConfigPage(
                     ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         headlineContent = { Text("Use most used apps", fontWeight = FontWeight.SemiBold) },
-                        supportingContent = {
-                            Text(
-                                "Automatically display your 6 most frequently used apps in Droidbar",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
                         trailingContent = {
                             Switch(
                                 checked = settings.droidbarUseMostUsedApps,

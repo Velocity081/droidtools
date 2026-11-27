@@ -59,6 +59,7 @@ class SettingsRepository(private val context: Context) {
         val SHOW_WEATHER = booleanPreferencesKey("show_weather")
         val SHOW_NETWORK_SPEED = booleanPreferencesKey("show_network_speed")
         val SHOW_ALARM = booleanPreferencesKey("show_alarm")
+        val SHOW_TIMER = booleanPreferencesKey("show_timer")
         val AUTO_DISMISS_NOTIFICATIONS = booleanPreferencesKey("auto_dismiss_notifications")
         val NOTIFICATION_AUTO_DISMISS_SECONDS = intPreferencesKey("notification_auto_dismiss_seconds")
         val PERSISTENT_CHARGING = booleanPreferencesKey("persistent_charging")
@@ -67,6 +68,7 @@ class SettingsRepository(private val context: Context) {
         val FONT_KEY = stringPreferencesKey("font_key")
         val SWAP_ACTIVITIES_ON_SWIPE = booleanPreferencesKey("swap_activities_on_swipe")
         val BLURRED_ALBUM_ART_BACKGROUND = booleanPreferencesKey("blurred_album_art_background")
+        val MEDIA_BLUR_EQUALIZER = booleanPreferencesKey("media_blur_equalizer")
         val DESIGN_LANGUAGE = stringPreferencesKey("design_language")
         val GLASS_ENABLED = booleanPreferencesKey("glass_enabled")
         val GLASS_OPACITY = intPreferencesKey("glass_opacity")
@@ -148,6 +150,7 @@ class SettingsRepository(private val context: Context) {
             showWeather = preferences[PreferencesKeys.SHOW_WEATHER] ?: false,
             showNetworkSpeed = preferences[PreferencesKeys.SHOW_NETWORK_SPEED] ?: false,
             showAlarm = preferences[PreferencesKeys.SHOW_ALARM] ?: true,
+            showTimer = preferences[PreferencesKeys.SHOW_TIMER] ?: true,
             autoDismissNotifications = preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] ?: false,
             notificationAutoDismissSeconds = preferences[PreferencesKeys.NOTIFICATION_AUTO_DISMISS_SECONDS] ?: 3,
             persistentCharging = preferences[PreferencesKeys.PERSISTENT_CHARGING] ?: false,
@@ -156,6 +159,7 @@ class SettingsRepository(private val context: Context) {
             fontKey = preferences[PreferencesKeys.FONT_KEY] ?: "DEFAULT",
             swapActivitiesOnSwipe = preferences[PreferencesKeys.SWAP_ACTIVITIES_ON_SWIPE] ?: true,
             blurredAlbumArtBackground = preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] ?: false,
+            mediaBlurEqualizer = preferences[PreferencesKeys.MEDIA_BLUR_EQUALIZER] ?: false,
             designLanguage = preferences[PreferencesKeys.DESIGN_LANGUAGE]?.let {
                 try { com.droidbubble.app.model.DesignLanguage.valueOf(it) } catch (_: Exception) { null }
             } ?: if (preferences[PreferencesKeys.GLASS_ENABLED] == true) com.droidbubble.app.model.DesignLanguage.GLASS else com.droidbubble.app.model.DesignLanguage.MATERIAL3,
@@ -175,7 +179,7 @@ class SettingsRepository(private val context: Context) {
             featurePriorities = preferences[PreferencesKeys.FEATURE_PRIORITIES]
                 ?.split(",")
                 ?.map { it.trim() }
-                ?.filter { it.isNotBlank() && it != "TIMER" }
+                ?.filter { it.isNotBlank() }
                 ?.let { list ->
                     val set = list.toSet()
                     list + DEFAULT_FEATURE_PRIORITIES.filter { it !in set }
@@ -261,6 +265,7 @@ class SettingsRepository(private val context: Context) {
                 showWeather = preferences[PreferencesKeys.SHOW_WEATHER] ?: false,
                 showNetworkSpeed = preferences[PreferencesKeys.SHOW_NETWORK_SPEED] ?: false,
                     showAlarm = preferences[PreferencesKeys.SHOW_ALARM] ?: true,
+            showTimer = preferences[PreferencesKeys.SHOW_TIMER] ?: true,
                 autoDismissNotifications = preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] ?: false,
                 notificationAutoDismissSeconds = preferences[PreferencesKeys.NOTIFICATION_AUTO_DISMISS_SECONDS] ?: 3,
                 persistentCharging = preferences[PreferencesKeys.PERSISTENT_CHARGING] ?: false,
@@ -269,6 +274,7 @@ class SettingsRepository(private val context: Context) {
                 fontKey = preferences[PreferencesKeys.FONT_KEY] ?: "DEFAULT",
                 swapActivitiesOnSwipe = preferences[PreferencesKeys.SWAP_ACTIVITIES_ON_SWIPE] ?: true,
             blurredAlbumArtBackground = preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] ?: false,
+            mediaBlurEqualizer = preferences[PreferencesKeys.MEDIA_BLUR_EQUALIZER] ?: false,
             designLanguage = preferences[PreferencesKeys.DESIGN_LANGUAGE]?.let {
                 try { com.droidbubble.app.model.DesignLanguage.valueOf(it) } catch (_: Exception) { null }
             } ?: if (preferences[PreferencesKeys.GLASS_ENABLED] == true) com.droidbubble.app.model.DesignLanguage.GLASS else com.droidbubble.app.model.DesignLanguage.MATERIAL3,
@@ -288,7 +294,7 @@ class SettingsRepository(private val context: Context) {
                 featurePriorities = preferences[PreferencesKeys.FEATURE_PRIORITIES]
                     ?.split(",")
                     ?.map { it.trim() }
-                    ?.filter { it.isNotBlank() && it != "TIMER" }
+                    ?.filter { it.isNotBlank() }
                     ?.let { list ->
                         val set = list.toSet()
                         list + DEFAULT_FEATURE_PRIORITIES.filter { it !in set }
@@ -365,6 +371,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_WEATHER] = newSettings.showWeather
             preferences[PreferencesKeys.SHOW_NETWORK_SPEED] = newSettings.showNetworkSpeed
             preferences[PreferencesKeys.SHOW_ALARM] = newSettings.showAlarm
+            preferences[PreferencesKeys.SHOW_TIMER] = newSettings.showTimer
             preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] = newSettings.autoDismissNotifications
             preferences[PreferencesKeys.NOTIFICATION_AUTO_DISMISS_SECONDS] = newSettings.notificationAutoDismissSeconds
             preferences[PreferencesKeys.PERSISTENT_CHARGING] = newSettings.persistentCharging
@@ -373,6 +380,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.FONT_KEY] = newSettings.fontKey
             preferences[PreferencesKeys.SWAP_ACTIVITIES_ON_SWIPE] = newSettings.swapActivitiesOnSwipe
             preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] = newSettings.blurredAlbumArtBackground
+            preferences[PreferencesKeys.MEDIA_BLUR_EQUALIZER] = newSettings.mediaBlurEqualizer
             preferences[PreferencesKeys.DESIGN_LANGUAGE] = newSettings.designLanguage.name
             preferences[PreferencesKeys.GLASS_ENABLED] = (newSettings.designLanguage == com.droidbubble.app.model.DesignLanguage.GLASS)
             preferences[PreferencesKeys.GLASS_OPACITY] = newSettings.glassOpacity

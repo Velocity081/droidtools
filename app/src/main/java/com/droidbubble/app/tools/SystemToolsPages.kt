@@ -572,6 +572,13 @@ fun DisplaySettingsPage(
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Always-On Display", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = {
+                                Text(
+                                    text = "Only available if your device supports AOD",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
                             leadingContent = {
                                 CookieIconBox(
                                     icon = Icons.Default.Smartphone,

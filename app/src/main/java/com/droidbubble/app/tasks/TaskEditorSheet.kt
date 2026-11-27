@@ -2,7 +2,14 @@ package com.droidbubble.app.tasks
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,20 +32,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.droidbubble.app.island.M3CloverShape
 import com.droidbubble.app.ui.main.AppPickerDialog
 import com.droidbubble.app.ui.main.CookieIconBox
 import com.droidbubble.app.ui.main.GroupPosition
 import com.droidbubble.app.ui.main.ProgressiveTopBlurBox
+import com.droidbubble.app.ui.main.SettingsCardItem
 import com.droidbubble.app.ui.main.getGroupedShape
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -61,6 +73,8 @@ fun TaskEditorScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
+    val coroutineScope = rememberCoroutineScope()
     var name by remember { mutableStateOf(initialShortcut?.name ?: "") }
     var selectedIconName by remember { mutableStateOf(initialShortcut?.iconName ?: "Bolt") }
     var showInBubble by remember { mutableStateOf(initialShortcut?.showInBubble ?: true) }
@@ -106,8 +120,12 @@ fun TaskEditorScreen(
 
     Scaffold(
         modifier = modifier,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                ),
                 title = {
                     Text(
                         text = if (initialShortcut == null) "New Shortcut" else "Edit Shortcut",
@@ -123,9 +141,16 @@ fun TaskEditorScreen(
                     }
                 },
                 actions = {
-                    TextButton(
+                    val canSave = name.isNotBlank() && actions.isNotEmpty()
+                    val saveBtnContainer by animateColorAsState(
+                        targetValue = if (canSave) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        animationSpec = tween(180),
+                        label = "saveBtnContainer"
+                    )
+                    Button(
                         onClick = {
-                            if (name.isNotBlank()) {
+                            if (canSave) {
+                                view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                                 onSave(
                                     TaskShortcut(
                                         id = initialShortcut?.id ?: java.util.UUID.randomUUID().toString(),
@@ -140,9 +165,20 @@ fun TaskEditorScreen(
                                 )
                             }
                         },
-                        enabled = name.isNotBlank() && actions.isNotEmpty()
+                        enabled = canSave,
+                        shape = CircleShape,
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = saveBtnContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier
+                            .padding(end = 12.dp)
+                            .height(36.dp)
                     ) {
-                        Text("Save", fontWeight = FontWeight.Bold)
+                        Text("Save", fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
                     }
                 }
             )
@@ -168,24 +204,35 @@ fun TaskEditorScreen(
             ) {
                 // 1. Icon & Name Row
                 item {
-                    Surface(
-                        shape = RoundedCornerShape(24.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
+                    val iconPop = remember { Animatable(1f) }
+                    LaunchedEffect(selectedIconName) {
+                        iconPop.snapTo(0.84f)
+                        iconPop.animateTo(
+                            targetValue = 1f,
+                            animationSpec = spring(dampingRatio = 0.52f, stiffness = 480f)
+                        )
+                    }
+                    SettingsCardItem(position = GroupPosition.SINGLE) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp),
+                                .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
                             Surface(
                                 modifier = Modifier
                                     .size(56.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .clickable { showIconPicker = true },
-                                shape = RoundedCornerShape(16.dp),
+                                    .graphicsLayer {
+                                        scaleX = iconPop.value
+                                        scaleY = iconPop.value
+                                    }
+                                    .clip(M3CloverShape)
+                                    .clickable {
+                                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        showIconPicker = true
+                                    },
+                                shape = M3CloverShape,
                                 color = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = MaterialTheme.colorScheme.primary
                             ) {
@@ -193,7 +240,7 @@ fun TaskEditorScreen(
                                     Icon(
                                         imageVector = TaskIcons.getIcon(selectedIconName),
                                         contentDescription = "Pick icon",
-                                        modifier = Modifier.size(28.dp)
+                                        modifier = Modifier.size(26.dp)
                                     )
                                 }
                             }
@@ -204,6 +251,12 @@ fun TaskEditorScreen(
                                 label = { Text("Shortcut Name") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(16.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                                    unfocusedBorderColor = Color.Transparent,
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary
+                                ),
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -216,19 +269,14 @@ fun TaskEditorScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Surface(
-                            shape = getGroupedShape(GroupPosition.TOP),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+                        SettingsCardItem(position = GroupPosition.TOP, isActive = showInBubble) {
                             ListItem(
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                headlineContent = { Text("Show in Droidbubble", fontWeight = FontWeight.Medium) },
+                                headlineContent = { Text("Show in Droidbubble", fontWeight = FontWeight.SemiBold) },
                                 leadingContent = {
-                                    Icon(
-                                        imageVector = Icons.Default.Widgets,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
+                                    CookieIconBox(
+                                        icon = Icons.Default.Widgets,
+                                        isChecked = showInBubble
                                     )
                                 },
                                 trailingContent = {
@@ -240,19 +288,14 @@ fun TaskEditorScreen(
                             )
                         }
 
-                        Surface(
-                            shape = getGroupedShape(GroupPosition.BOTTOM),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+                        SettingsCardItem(position = GroupPosition.BOTTOM, isActive = showInDroidbar) {
                             ListItem(
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                headlineContent = { Text("Add to Droidbar", fontWeight = FontWeight.Medium) },
+                                headlineContent = { Text("Add to Droidbar", fontWeight = FontWeight.SemiBold) },
                                 leadingContent = {
-                                    Icon(
-                                        imageVector = Icons.Default.VerticalSplit,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
+                                    CookieIconBox(
+                                        icon = Icons.Default.VerticalSplit,
+                                        isChecked = showInDroidbar
                                     )
                                 },
                                 trailingContent = {
@@ -275,12 +318,29 @@ fun TaskEditorScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Automations (${triggers.size})",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Automations",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "${triggers.size}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         if (triggers.isNotEmpty()) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -303,17 +363,14 @@ fun TaskEditorScreen(
                 // 4. Triggers List + "Add Automation Trigger" Item
                 item {
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateContentSize(animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f)),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         triggers.forEachIndexed { idx, trigger ->
                             val pos = if (idx == 0) GroupPosition.TOP else GroupPosition.MIDDLE
-                            val shape = getGroupedShape(pos)
-                            Surface(
-                                shape = shape,
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+                            SettingsCardItem(position = pos) {
                                 ListItem(
                                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                     headlineContent = {
@@ -336,27 +393,12 @@ fun TaskEditorScreen(
                                         )
                                     },
                                     leadingContent = {
-                                        Surface(
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = MaterialTheme.colorScheme.primaryContainer,
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = trigger.getIcon(),
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        }
+                                        CookieIconBox(icon = trigger.getIcon(), isChecked = true)
                                     },
                                     trailingContent = {
                                         IconButton(
                                             onClick = {
+                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                                 triggers = triggers.filterIndexed { i, _ -> i != idx }
                                             },
                                             modifier = Modifier.size(30.dp)
@@ -374,49 +416,32 @@ fun TaskEditorScreen(
                         }
 
                         val addTriggerPos = if (triggers.isEmpty()) GroupPosition.SINGLE else GroupPosition.BOTTOM
-                        val addTriggerShape = getGroupedShape(addTriggerPos)
-                        Surface(
-                            shape = addTriggerShape,
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(addTriggerShape)
-                                .clickable { showAddTriggerSheet = true }
+                        SettingsCardItem(
+                            position = addTriggerPos,
+                            isActive = true,
+                            modifier = Modifier.clickable {
+                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                showAddTriggerSheet = true
+                            }
                         ) {
                             ListItem(
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                 headlineContent = {
                                     Text(
-                                        text = "Add Automation (Time, Date, or Device Event)",
+                                        text = "Add Automation",
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 14.5.sp,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 },
                                 leadingContent = {
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.AutoAwesome,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onPrimary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    }
+                                    CookieIconBox(icon = Icons.Default.AutoAwesome, isChecked = true)
                                 },
                                 trailingContent = {
                                     Icon(
                                         imageVector = Icons.Default.ChevronRight,
                                         contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -434,19 +459,38 @@ fun TaskEditorScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Actions (${actions.size})",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Actions",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "${actions.size}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                     }
                 }
 
                 // 6. Chained Action Blocks List + Integrated "Add Action" List Item
                 item {
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateContentSize(animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f)),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         actions.forEachIndexed { index, action ->
@@ -458,7 +502,7 @@ fun TaskEditorScreen(
                             }
                             val cardShape = getGroupedShape(position)
                             val cardBg = if (isRepeatBoundary) {
-                                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f)
                             } else {
                                 MaterialTheme.colorScheme.surfaceContainerHigh
                             }
@@ -496,29 +540,14 @@ fun TaskEditorScreen(
                                                 )
                                             },
                                             leadingContent = {
-                                                Surface(
-                                                    shape = RoundedCornerShape(10.dp),
-                                                    color = if (isRepeatBoundary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
-                                                    modifier = Modifier.size(36.dp)
-                                                ) {
-                                                    Box(
-                                                        modifier = Modifier.fillMaxSize(),
-                                                        contentAlignment = Alignment.Center
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = action.getIcon(),
-                                                            contentDescription = null,
-                                                            tint = if (isRepeatBoundary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.size(20.dp)
-                                                        )
-                                                    }
-                                                }
+                                                CookieIconBox(icon = action.getIcon(), isChecked = isRepeatBoundary)
                                             },
                                             trailingContent = {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                                     IconButton(
                                                         onClick = {
                                                             if (index > 0) {
+                                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                                                 val m = actions.toMutableList()
                                                                 val tmp = m[index - 1]
                                                                 m[index - 1] = m[index]
@@ -539,6 +568,7 @@ fun TaskEditorScreen(
                                                     IconButton(
                                                         onClick = {
                                                             if (index < actions.lastIndex) {
+                                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                                                 val m = actions.toMutableList()
                                                                 val tmp = m[index + 1]
                                                                 m[index + 1] = m[index]
@@ -558,6 +588,7 @@ fun TaskEditorScreen(
                                                     }
                                                     IconButton(
                                                         onClick = {
+                                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                                             actions = actions.filterIndexed { i, _ -> i != index }
                                                         },
                                                         modifier = Modifier.size(30.dp)
@@ -1077,17 +1108,14 @@ fun TaskEditorScreen(
 
                         // "Add Action" item as part of the grouped list
                         val addPosition = if (actions.isEmpty()) GroupPosition.SINGLE else GroupPosition.BOTTOM
-                        val addShape = getGroupedShape(addPosition)
-                        Surface(
-                            shape = addShape,
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(addShape)
-                                .clickable {
-                                    addActionSearchQuery = ""
-                                    showAddActionDialog = true
-                                }
+                        SettingsCardItem(
+                            position = addPosition,
+                            isActive = true,
+                            modifier = Modifier.clickable {
+                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                addActionSearchQuery = ""
+                                showAddActionDialog = true
+                            }
                         ) {
                             ListItem(
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -1096,33 +1124,17 @@ fun TaskEditorScreen(
                                         text = "Add Action",
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 15.sp,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 },
                                 leadingContent = {
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Add,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onPrimary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    }
+                                    CookieIconBox(icon = Icons.Default.Add, isChecked = true)
                                 },
                                 trailingContent = {
                                     Icon(
                                         imageVector = Icons.Default.ChevronRight,
                                         contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }

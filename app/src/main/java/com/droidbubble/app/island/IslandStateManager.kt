@@ -1,6 +1,7 @@
 package com.droidbubble.app.island
 
 import com.droidbubble.app.model.ActiveCallState
+import com.droidbubble.app.model.ActiveTimerState
 import com.droidbubble.app.model.IslandPriority
 import com.droidbubble.app.model.MediaInfo
 import com.droidbubble.app.model.NotificationInfo
@@ -45,6 +46,15 @@ object IslandStateManager {
 
     private val _isDeviceLocked = MutableStateFlow(false)
     val isDeviceLocked: StateFlow<Boolean> = _isDeviceLocked.asStateFlow()
+
+    private val _displayRotation = MutableStateFlow(android.view.Surface.ROTATION_0)
+    val displayRotation: StateFlow<Int> = _displayRotation.asStateFlow()
+
+    fun updateDisplayRotation(rotation: Int) {
+        if (_displayRotation.value != rotation) {
+            _displayRotation.value = rotation
+        }
+    }
 
     fun setDeviceLocked(locked: Boolean) {
         if (_isDeviceLocked.value != locked) {
@@ -220,6 +230,15 @@ object IslandStateManager {
     var onSetFlashlightLevel: ((Int) -> Unit)? = null
     var onTurnOffFlashlight: (() -> Unit)? = null
 
+    private val _activeTimerState = MutableStateFlow(ActiveTimerState())
+    val activeTimerState: StateFlow<ActiveTimerState> = _activeTimerState.asStateFlow()
+
+    var onTogglePauseTimer: (() -> Unit)? = null
+    var onEndTimer: (() -> Unit)? = null
+
+    val isTimerActive: Boolean
+        get() = _activeTimerState.value.isActive
+
     val isRecordingActive: Boolean
         get() = _screenRecordingState.value.isRecording
 
@@ -271,7 +290,7 @@ object IslandStateManager {
         get() = _alarmInfo.value != null
 
     val isOccupied: Boolean
-        get() = isCallActive || isRecordingActive || isNotificationActive || isMediaActive || isProgressActive || isChargingActive || isUnlockActive || isBluetoothActive || isFlashlightActive || isRingerModeActive || isAirplaneModeActive || isClipboardActive || isAlarmActive
+        get() = isCallActive || isRecordingActive || isTimerActive || isNotificationActive || isMediaActive || isProgressActive || isChargingActive || isUnlockActive || isBluetoothActive || isFlashlightActive || isRingerModeActive || isAirplaneModeActive || isClipboardActive || isAlarmActive
 
     // Live priority determination: Call is top priority, then Media, Flashlight, Progress, Screen Recording, and Notification alerts last
     val currentPriority: IslandPriority
@@ -282,6 +301,7 @@ object IslandStateManager {
                 isFlashlightActive -> IslandPriority.FLASHLIGHT
                 isProgressActive -> IslandPriority.PROGRESS
                 _screenRecordingState.value.isRecording -> IslandPriority.SCREEN_RECORDING
+                isTimerActive -> IslandPriority.TIMER
                 _activeNotification.value != null -> IslandPriority.POP_NOTIFICATION
                 isAlarmActive -> IslandPriority.ALARM
                 else -> IslandPriority.IDLE
@@ -296,6 +316,13 @@ object IslandStateManager {
         _flashlightLevel.value = level.coerceIn(1, 4)
         _maxFlashlightLevel.value = 4
         if (!enabled && _isExpanded.value && (_expandedPriority.value == IslandPriority.FLASHLIGHT || !isOccupied)) {
+            collapse()
+        }
+    }
+
+    fun updateTimerState(state: ActiveTimerState) {
+        _activeTimerState.value = state
+        if (!state.isActive && _isExpanded.value && (_expandedPriority.value == IslandPriority.TIMER || !isOccupied)) {
             collapse()
         }
     }
