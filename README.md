@@ -13,6 +13,9 @@
   <a href="https://github.com/Velocity081/droidtools/releases/latest/download/Droidtools.apk">
     <img src="https://img.shields.io/badge/Download-APK-2ea44f?style=flat-square" alt="Download APK" />
   </a>
+  <a href="https://github.com/Velocity081/droidtools/releases">
+    <img src="https://img.shields.io/github/downloads/Velocity081/droidtools/total?style=flat-square&label=Downloads" alt="Downloads" />
+  </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" />
   </a>
